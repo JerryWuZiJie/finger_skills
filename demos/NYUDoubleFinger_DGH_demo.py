@@ -2,6 +2,9 @@
 This run on real robot
 '''
 import os
+import signal
+import sys
+from threading import current_thread
 import numpy as np
 import matplotlib.pylab as plt
 import pinocchio as pin
@@ -21,10 +24,10 @@ def cal_pose(pin_robot, id_ee):
     calculate position matrix (transition and rotation)
     '''
     # get frame id
-    frame = pin_robot.model.getFrameId(id_ee)
+    JOINT_ID = pin_robot.model.getFrameId(id_ee)
 
     # get pose
-    return pin.updateFramePlacement(pin_robot.model, pin_robot.data, frame)
+    return pin.updateFramePlacement(pin_robot.model, pin_robot.data, JOINT_ID)
 
 
 def cal_oriented_j(pin_robot, id_ee, q):
@@ -32,14 +35,14 @@ def cal_oriented_j(pin_robot, id_ee, q):
     calculate oriented jacobian of the end effector
     '''
     # get frame id
-    frame = pin_robot.model.getFrameId(id_ee)
+    JOINT_ID = pin_robot.model.getFrameId(id_ee)
 
     # get pose
-    pose = pin.updateFramePlacement(pin_robot.model, pin_robot.data, frame)
+    pose = pin.updateFramePlacement(pin_robot.model, pin_robot.data, JOINT_ID)
 
     # get oriented jacobian
     body_jocobian = pin.computeFrameJacobian(
-        pin_robot.model, pin_robot.data, q, frame)
+        pin_robot.model, pin_robot.data, q, JOINT_ID)
     Ad = np.zeros((6, 6))
     Ad[:3, :3] = pose.rotation
     Ad[3:, 3:] = pose.rotation
@@ -47,9 +50,41 @@ def cal_oriented_j(pin_robot, id_ee, q):
     return Ad @ body_jocobian
 
 
-def cal_inverseK():
-    # TODO: given position, return desired angle
-    pass
+def cal_inverseK(pin_robot, id_ee, des_pos, cur_pos):
+    # todo: calculate inverse kinematic
+    # from __future__ import print_function
+    from numpy.linalg import norm, solve
+    
+    # get frame id
+    JOINT_ID = pin_robot.model.getFrameId(id_ee)
+    # todo
+    # oMdes = des_pos
+    oMdes = pin.SE3(np.eye(3), np.array([1., 0., 1.]))
+    
+    q      = np.array(cur_pos)  # make a copy of current position
+    eps    = 1e-4
+    IT_MAX = 1000
+    DT     = 1e-1
+    damp   = 1e-12
+    
+    for _ in range(IT_MAX):
+        pin_robot.framesForwardKinematics(q)
+        dMi = oMdes.actInv(pin_robot.data.oMi[JOINT_ID])
+        err = pin.log(dMi).vector
+        if norm(err) < eps:
+            print("Convergence achieved!")
+            break
+        # J = pin.computeJointJacobian(model,data,q,JOINT_ID)
+        J = pin_robot.computeJointJacobian(q, JOINT_ID)
+        v = - J.T.dot(solve(J.dot(J.T) + damp * np.eye(3), err))
+        q = pin.integrate(pin_robot.model,q,v*DT)
+    else:
+        print("\nWarning: the iterative algorithm has not reached convergence to the desired precision")
+    
+    print('\nresult: %s' % q.flatten().tolist())
+    print('\nfinal error: %s' % err.T)
+
+    return q
 
 
 # controls for calculation ----------------------
@@ -116,7 +151,7 @@ class ImpedanceControl(Control):
 
 # controllers for running ----------------------
 class Controller:
-    def __init__(self, head, id_ee, param0, param1, control, total_time, dt=0.001):
+    def __init__(self, head, id_ee, param0, param1, control, dt=0.001):
         # setup head
         self.head = head
         # pos and vel is reference, will update automatically
@@ -132,12 +167,11 @@ class Controller:
 
         # setup control
         self.control = control(param0, param1)
-        # hold still in the end of simulation
-        self.hold_control = PDControl(4, .4)
-        self.hold_time = 1  # second
+        # move robot to it's initial position
+        self.position_control = PDControl(4, .4)
+        self.position_steps = int(0.5/dt)
 
         # setup steps
-        self.total_time = total_time
         self.dt = dt
         self.current_step = 0
 
@@ -155,22 +189,24 @@ class Controller:
         # update robot kinematics
         self.robot.framesForwardKinematics(self.joint_positions)
 
-        # switch to PD control and hold still for last seconds
-        self.current_step += 1
-        if self.current_step >= int((self.total_time-self.hold_time)/self.dt):
-            if self.current_step == int((self.total_time-self.hold_time)/self.dt):
-                # set current position (copy of joint pos) as dev_pos and 0 as des_vel
-                self.set_target(np.array(self.joint_positions))
-            self.tau = self.hold_control.cal_torque(
+        # use PD control to make robot move to initial state
+        if self.current_step <= self.position_steps:
+            # todo: change setting initial position to not setting it
+            if self.current_step == 0:
+                # set initial position
+                self.set_target(np.zeros(self.robot.nq))
+            self.tau = self.position_control.cal_torque(
                 self.des_pos, self.joint_positions, self.des_vel, self.joint_velocities)
             self.head.set_control('ctrl_joint_torques', self.tau)
+            self.current_step += 1
             return False
+        self.current_step += 1
         return True
 
 
 class PDController(Controller):
-    def __init__(self, head, id_ee, param0, param1, total_time, des_pos, des_vel=None):
-        super().__init__(head, id_ee, param0, param1, PDControl, total_time)
+    def __init__(self, head, id_ee, param0, param1, des_pos, des_vel=None):
+        super().__init__(head, id_ee, param0, param1, PDControl)
         self.set_target(des_pos, des_vel)
 
     def run(self, thread):
@@ -181,21 +217,23 @@ class PDController(Controller):
 
 
 class VelocityController(Controller):
-    def __init__(self, head, id_ee, param0, param1, total_time, center, radius, speed=np.pi):
-        super().__init__(head, id_ee, param0, param1, VelocityControl, total_time)
+    def __init__(self, head, id_ee, param0, param1, center, radius, speed=np.pi):
+        super().__init__(head, id_ee, param0, param1, VelocityControl)
 
         # calculate circle locus
         self.locus = self.circular_locus(
-            center, radius, total_time-self.hold_time, self.dt, speed)
-        self.set_target(*self.locus[self.current_step])
+            center, radius, speed, self.dt)
+        index = (self.current_step-self.position_steps) % len(self.locus)
+        self.set_target(*self.locus[index])
 
     @staticmethod
-    def circular_locus(center, radius, total_time, dt, w):
+    def circular_locus(center, radius, w, dt):
         '''
         calculate desire circular locus in xz plane
         '''
-        length = int(total_time/dt) + \
-            5  # switch controller has 1 extra run, +5 to ensure no index error
+        # 2*np.pi, w*dt
+
+        length = abs(int(2*np.pi / (w * dt)))
         locus = []
         for i in range(length):
             t = dt * i
@@ -220,12 +258,13 @@ class VelocityController(Controller):
             self.head.set_control('ctrl_joint_torques', self.tau)
 
             # update target
-            self.set_target(*self.locus[self.current_step])
+            index = (self.current_step-self.position_steps) % len(self.locus)
+            self.set_target(*self.locus[index])
 
 
 class ImpedanceController(Controller):
-    def __init__(self, head, id_ee, param0, param1, total_time, des_pos, des_vel=None):
-        super().__init__(head, id_ee, param0, param1, ImpedanceControl, total_time)
+    def __init__(self, head, id_ee, param0, param1, des_pos, des_vel=None):
+        super().__init__(head, id_ee, param0, param1, ImpedanceControl)
         self.set_target(des_pos, des_vel)
 
     def run(self, thread):
@@ -239,18 +278,16 @@ class ImpedanceController(Controller):
             self.head.set_control('ctrl_joint_torques', self.tau)
 
 
-def choose_controller(finger, control, head, id, time):
+def choose_controller(finger, control, head, id):
     '''
     choose controller based on finger, return controller and q, dq
     '''
     if finger == 0:  # first finger
         if control == 0:
             # finger0 PD
-            P = np.array([4,4,3])
-            D = np.array([.5,.4,.2])
-            ctrl = PDController(head, id, P, D, time, np.array([0,0,np.pi/2]))
-            q = np.array(NYUFingerDoubleConfig0.initial_configuration)
-            dq = np.array(NYUFingerDoubleConfig0.initial_velocity)
+            P = np.array([4, 4, 3])
+            D = np.array([.5, .4, .2])
+            ctrl = PDController(head, id, P, D, np.array([0, 0, np.pi/2]))
         elif control == 1:
             # finger0 velocity
             gain = 1.
@@ -258,26 +295,22 @@ def choose_controller(finger, control, head, id, time):
             center = [-0.0506, -0.05945, 0.05]
             center[0] -= 0.1
             center[1] -= 0.05  # avoid two robot touching
-            center[2] += 0.2
+            center[2] += 0.15
             radius = 0.04
-            ctrl = VelocityController(head, id, gain, D, time, center, radius, np.pi*3)
-            q = np.array([0., -0.5, 1])
-            dq = np.array(NYUFingerDoubleConfig0.initial_velocity)
+            ctrl = VelocityController(
+                head, id, gain, D, center, radius, np.pi*3)
         else:
             # # finger0 impedance
-            K = np.diag([50,50,10])
-            D = np.diag([5,5,0])
-            ctrl = ImpedanceController(head, id, K, D, time, np.array([-0.051-0.1, -0.059, 0.05+0.1]))
-            q = np.array(NYUFingerDoubleConfig0.initial_configuration)
-            dq = np.array(NYUFingerDoubleConfig0.initial_velocity)
+            K = np.diag([50, 50, 10])
+            D = np.diag([5, 5, 0])
+            ctrl = ImpedanceController(
+                head, id, K, D, np.array([-0.051-0.1, -0.059, 0.05+0.1]))
     else:  # second finger
         if control == 0:
             # finger1 PD
-            P = np.array([4,4,3])
-            D = np.array([.5,.4,.2])
-            ctrl = PDController(head, id, P, D, time, np.array([0,0,np.pi/2]))
-            q = np.array(NYUFingerDoubleConfig1.initial_configuration)
-            dq = np.array(NYUFingerDoubleConfig1.initial_velocity)
+            P = np.array([4, 4, 3])
+            D = np.array([.5, .4, .2])
+            ctrl = PDController(head, id, P, D, np.array([0, 0, np.pi/2]))
         elif control == 1:
             # finger1 velocity
             gain = 1.
@@ -285,19 +318,17 @@ def choose_controller(finger, control, head, id, time):
             center = [0.0506947, 0.0594499, 0.05]
             center[0] += 0.1
             center[1] += 0.05  # avoid two robot touching
-            center[2] += 0.2
+            center[2] += 0.15
             radius = 0.04
-            ctrl = VelocityController(head, id, gain, D, time, center, radius, -np.pi*3)
-            q = np.array([0., -0.5, 1])
-            dq = np.array(NYUFingerDoubleConfig1.initial_velocity)
+            ctrl = VelocityController(
+                head, id, gain, D, center, radius, -np.pi*3)
         else:
             # finger1 impedance
-            K = np.diag([50,50,10])
-            D = np.diag([5,5,0])
-            ctrl = ImpedanceController(head, id, K, D, time, np.array([0.051+0.1, 0.059, 0.05+0.1]))
-            q = np.array(NYUFingerDoubleConfig1.initial_configuration)
-            dq = np.array(NYUFingerDoubleConfig1.initial_velocity)
-    return ctrl, q, dq
+            K = np.diag([50, 50, 10])
+            D = np.diag([5, 5, 0])
+            ctrl = ImpedanceController(
+                head, id, K, D, np.array([0.051+0.1, 0.059, 0.05+0.1]))
+    return ctrl
 
 
 def main_sim(sim_time, finger0_controller=0, finger1_controller=0):
@@ -331,10 +362,8 @@ def main_sim(sim_time, finger0_controller=0, finger1_controller=0):
     )
 
     # setup controller
-    ctrl0, q0, dq0 = choose_controller(0, 1, head0, id0, sim_time)
-    thread_head.heads['finger0'].reset_state(q0, dq0)
-    ctrl1, q1, dq1 = choose_controller(1, 2, head1, id1, sim_time)
-    thread_head.heads['finger1'].reset_state(q1, dq1)
+    ctrl0 = choose_controller(0, finger0_controller, head0, id0)
+    ctrl1 = choose_controller(1, finger1_controller, head1, id1)
 
     # start simulation
     thread_head.switch_controllers((ctrl0, ctrl1))
@@ -351,16 +380,18 @@ def main_sim(sim_time, finger0_controller=0, finger1_controller=0):
     thread_head.plot_timing()
 
 
-def main_real(sim_time, finger0_controller=0, finger1_controller=0):
+def main_real(finger0_controller=0, finger1_controller=0):
     # setup some parameters that might not be used?
-    sim_time = 5.0  # seconds
     dt = 0.001
+    # todo: change ID to number
     id0 = 'finger0_lower_to_tip_joint'
     id1 = 'finger1_lower_to_tip_joint'
 
     # Create the dgm communication and instantiate the controllers.
-    path0 = os.path.join(NYUFingerDoubleConfig0().dgm_yaml_dir, 'dgm_parameters_nyu_finger_double_0.yaml')
-    path1 = os.path.join(NYUFingerDoubleConfig1().dgm_yaml_dir, 'dgm_parameters_nyu_finger_double_1.yaml')
+    path0 = os.path.join(NYUFingerDoubleConfig0().dgm_yaml_dir,
+                         'dgm_parameters_nyu_finger_double_0.yaml')
+    path1 = os.path.join(NYUFingerDoubleConfig1().dgm_yaml_dir,
+                         'dgm_parameters_nyu_finger_double_1.yaml')
     head0 = dynamic_graph_manager_cpp_bindings.DGMHead(path0)
     head1 = dynamic_graph_manager_cpp_bindings.DGMHead(path1)
     head0.read()
@@ -381,20 +412,27 @@ def main_real(sim_time, finger0_controller=0, finger1_controller=0):
     )
 
     # setup controller
-    ctrl0, q0, dq0 = choose_controller(0, 1, head0, id0, sim_time)
-    thread_head.heads['finger0'].reset_state(q0, dq0)  # todo: no reset state, need to implement yourself
-    ctrl1, q1, dq1 = choose_controller(1, 2, head1, id1, sim_time)
-    thread_head.heads['finger1'].reset_state(q1, dq1)  # todo: no reset state, need to implement yourself
+    ctrl0 = choose_controller(0, finger0_controller, head0, id0)
+    ctrl1 = choose_controller(1, finger1_controller, head1, id1)
 
     # Start the parallel processing.
     thread_head.switch_controllers(ctrl0, ctrl1)
-    thread_head.start()  # todo: it's an infinite loop, how should I stop?
+    try:
+        thread_head.start()
+    except KeyboardInterrupt:
+        # todo: can't capture keyboardinterrupt in subthread
+        print()
 
-    print("Finished controller setup")
+    print("Press Ctrl C to stop")
 
-    input("Wait for input to finish program.")
-    # todo: main thread will wait for the subthread to finish, so how will this end the program?
+
+def signal_handler(sig, frame):
+    # do something with the head
+    sys.exit(0)
 
 
 if __name__ == '__main__':
-    main_sim(5.0)
+    # handler to capture ctrl c
+    signal.signal(signal.SIGINT, signal_handler)
+
+    main_sim(3, 1, 2)
