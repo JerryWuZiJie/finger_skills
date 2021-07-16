@@ -24,10 +24,10 @@ def cal_pose(pin_robot, id_ee):
     calculate position matrix (transition and rotation)
     '''
     # get frame id
-    JOINT_ID = pin_robot.model.getFrameId(id_ee)
+    FRAME_ID = pin_robot.model.getFrameId(id_ee)
 
     # get pose
-    return pin.updateFramePlacement(pin_robot.model, pin_robot.data, JOINT_ID)
+    return pin.updateFramePlacement(pin_robot.model, pin_robot.data, FRAME_ID)
 
 
 def cal_oriented_j(pin_robot, id_ee, q):
@@ -35,14 +35,14 @@ def cal_oriented_j(pin_robot, id_ee, q):
     calculate oriented jacobian of the end effector
     '''
     # get frame id
-    JOINT_ID = pin_robot.model.getFrameId(id_ee)
+    FRAME_ID = pin_robot.model.getFrameId(id_ee)
 
     # get pose
-    pose = pin.updateFramePlacement(pin_robot.model, pin_robot.data, JOINT_ID)
+    pose = pin.updateFramePlacement(pin_robot.model, pin_robot.data, FRAME_ID)
 
     # get oriented jacobian
     body_jocobian = pin.computeFrameJacobian(
-        pin_robot.model, pin_robot.data, q, JOINT_ID)
+        pin_robot.model, pin_robot.data, q, FRAME_ID)
     Ad = np.zeros((6, 6))
     Ad[:3, :3] = pose.rotation
     Ad[3:, 3:] = pose.rotation
@@ -50,41 +50,48 @@ def cal_oriented_j(pin_robot, id_ee, q):
     return Ad @ body_jocobian
 
 
-def cal_inverseK(pin_robot, id_ee, des_pos, cur_pos):
+def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
+    '''
+    given desire position, return desire q'''
     # todo: calculate inverse kinematic
-    # from __future__ import print_function
-    from numpy.linalg import norm, solve
-    
+
     # get frame id
-    JOINT_ID = pin_robot.model.getFrameId(id_ee)
+    FRAME_ID = pin_robot.model.getFrameId(id_ee)
     # todo
     # oMdes = des_pos
-    oMdes = pin.SE3(np.eye(3), np.array([1., 0., 1.]))
-    
-    q      = np.array(cur_pos)  # make a copy of current position
-    eps    = 1e-4
+    oMdes = np.array(des_pos)
+
+    q = np.array(cur_q)  # make a copy of current position
+    print('-' * 50)
+    pin_robot.framesForwardKinematics(q)
+    pose_tran = pin.updateFramePlacement(
+        pin_robot.model, pin_robot.data, FRAME_ID).translation
+    print('desire pos', oMdes)
+    print('current pos', pose_tran)
+    eps = 1e-4
     IT_MAX = 1000
-    DT     = 1e-1
-    damp   = 1e-12
-    
+    DT = 1e-1
+    damp = 1e-12
+
     for _ in range(IT_MAX):
         pin_robot.framesForwardKinematics(q)
-        dMi = oMdes.actInv(pin_robot.data.oMi[JOINT_ID])
-        err = pin.log(dMi).vector
-        if norm(err) < eps:
+        pose_tran = pin.updateFramePlacement(
+            pin_robot.model, pin_robot.data, FRAME_ID).translation
+        err = oMdes - pose_tran
+        if np.linalg.norm(err) < eps:
             print("Convergence achieved!")
             break
-        # J = pin.computeJointJacobian(model,data,q,JOINT_ID)
-        J = pin_robot.computeJointJacobian(q, JOINT_ID)
-        v = - J.T.dot(solve(J.dot(J.T) + damp * np.eye(3), err))
-        q = pin.integrate(pin_robot.model,q,v*DT)
+        J = pin_robot.computeFrameJacobian(q, FRAME_ID)[:3]
+        v = - J.T.dot(np.linalg.solve(J.dot(J.T) + damp * np.eye(3), err))
+        q = pin.integrate(pin_robot.model, q, v*DT)
     else:
+        print('final pos', pose_tran)
         print("\nWarning: the iterative algorithm has not reached convergence to the desired precision")
-    
+
     print('\nresult: %s' % q.flatten().tolist())
     print('\nfinal error: %s' % err.T)
 
-    return q
+    return q % (2*np.pi)
 
 
 # controls for calculation ----------------------
@@ -151,7 +158,7 @@ class ImpedanceControl(Control):
 
 # controllers for running ----------------------
 class Controller:
-    def __init__(self, head, id_ee, param0, param1, control, dt=0.001):
+    def __init__(self, head, id_ee, param0, param1, control, dt=0.001, hold_time=5):
         # setup head
         self.head = head
         # pos and vel is reference, will update automatically
@@ -169,7 +176,7 @@ class Controller:
         self.control = control(param0, param1)
         # move robot to it's initial position
         self.position_control = PDControl(4, .4)
-        self.position_steps = int(0.5/dt)
+        self.position_steps = int(hold_time/dt)
 
         # setup steps
         self.dt = dt
@@ -192,11 +199,8 @@ class Controller:
         # use PD control to make robot move to initial state
         if self.current_step <= self.position_steps:
             # todo: change setting initial position to not setting it
-            if self.current_step == 0:
-                # set initial position
-                self.set_target(np.zeros(self.robot.nq))
             self.tau = self.position_control.cal_torque(
-                self.des_pos, self.joint_positions, self.des_vel, self.joint_velocities)
+                self.init_pos, self.joint_positions, self.init_vel, self.joint_velocities)
             self.head.set_control('ctrl_joint_torques', self.tau)
             self.current_step += 1
             return False
@@ -208,6 +212,10 @@ class PDController(Controller):
     def __init__(self, head, id_ee, param0, param1, des_pos, des_vel=None):
         super().__init__(head, id_ee, param0, param1, PDControl)
         self.set_target(des_pos, des_vel)
+
+        # calculate initial position in angle
+        self.init_pos = self.des_pos
+        self.init_vel = self.des_vel
 
     def run(self, thread):
         if super().run(thread):
@@ -223,8 +231,12 @@ class VelocityController(Controller):
         # calculate circle locus
         self.locus = self.circular_locus(
             center, radius, speed, self.dt)
-        index = (self.current_step-self.position_steps) % len(self.locus)
-        self.set_target(*self.locus[index])
+        self.set_target(*self.locus[0])
+
+        # calculate initial position in angle
+        self.init_pos = cal_inverseK(
+            self.robot, self.id, self.des_pos, self.joint_positions)
+        self.init_vel = np.zeros(self.robot.nv)
 
     @staticmethod
     def circular_locus(center, radius, w, dt):
@@ -266,6 +278,11 @@ class ImpedanceController(Controller):
     def __init__(self, head, id_ee, param0, param1, des_pos, des_vel=None):
         super().__init__(head, id_ee, param0, param1, ImpedanceControl)
         self.set_target(des_pos, des_vel)
+
+        # calculate initial position in angle
+        self.init_pos = cal_inverseK(
+            self.robot, self.id, self.des_pos, self.joint_positions)
+        self.init_vel = np.zeros(self.robot.nv)
 
     def run(self, thread):
         if super().run(thread):
@@ -327,7 +344,7 @@ def choose_controller(finger, control, head, id):
             K = np.diag([50, 50, 10])
             D = np.diag([5, 5, 0])
             ctrl = ImpedanceController(
-                head, id, K, D, np.array([0.051+0.1, 0.059, 0.05+0.1]))
+                head, id, K, D, np.array([0.051, 0.059, 0.05]))
     return ctrl
 
 
@@ -435,4 +452,4 @@ if __name__ == '__main__':
     # handler to capture ctrl c
     signal.signal(signal.SIGINT, signal_handler)
 
-    main_sim(3, 1, 2)
+    main_sim(20, 1, 2)
