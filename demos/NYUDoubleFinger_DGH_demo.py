@@ -57,11 +57,10 @@ def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
 
     # get frame id
     FRAME_ID = pin_robot.model.getFrameId(id_ee)
-    # todo
-    # oMdes = des_pos
     oMdes = np.array(des_pos)
 
-    q = np.array(cur_q)  # make a copy of current position
+    # q = np.array(cur_q)  # make a copy of current position
+    q = np.array([0, 1/2, 1/2])
     print('-' * 50)
     pin_robot.framesForwardKinematics(q)
     pose_tran = pin.updateFramePlacement(
@@ -69,7 +68,7 @@ def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
     print('desire pos', oMdes)
     print('current pos', pose_tran)
     eps = 1e-4
-    IT_MAX = 1000
+    IT_MAX = 10000*5
     DT = 1e-1
     damp = 1e-12
 
@@ -88,10 +87,11 @@ def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
         print('final pos', pose_tran)
         print("\nWarning: the iterative algorithm has not reached convergence to the desired precision")
 
-    print('\nresult: %s' % q.flatten().tolist())
-    print('\nfinal error: %s' % err.T)
-
-    return q % (2*np.pi)
+    print('\nresult:', q)
+    print('\nfinal error:', err.T)
+    print('-' * 50)
+    sys.exit(0)
+    return q
 
 
 # controls for calculation ----------------------
@@ -198,7 +198,6 @@ class Controller:
 
         # use PD control to make robot move to initial state
         if self.current_step <= self.position_steps:
-            # todo: change setting initial position to not setting it
             self.tau = self.position_control.cal_torque(
                 self.init_pos, self.joint_positions, self.init_vel, self.joint_velocities)
             self.head.set_control('ctrl_joint_torques', self.tau)
@@ -321,7 +320,7 @@ def choose_controller(finger, control, head, id):
             K = np.diag([50, 50, 10])
             D = np.diag([5, 5, 0])
             ctrl = ImpedanceController(
-                head, id, K, D, np.array([-0.051-0.1, -0.059, 0.05+0.1]))
+                head, id, K, D, np.array([-0.0506, -0.05945, 0.05]))
     else:  # second finger
         if control == 0:
             # finger1 PD
@@ -400,7 +399,6 @@ def main_sim(sim_time, finger0_controller=0, finger1_controller=0):
 def main_real(finger0_controller=0, finger1_controller=0):
     # setup some parameters that might not be used?
     dt = 0.001
-    # todo: change ID to number
     id0 = 'finger0_lower_to_tip_joint'
     id1 = 'finger1_lower_to_tip_joint'
 
@@ -444,7 +442,7 @@ def main_real(finger0_controller=0, finger1_controller=0):
 
 
 def signal_handler(sig, frame):
-    # do something with the head
+    # todo: do something with the head
     sys.exit(0)
 
 
@@ -452,4 +450,4 @@ if __name__ == '__main__':
     # handler to capture ctrl c
     signal.signal(signal.SIGINT, signal_handler)
 
-    main_sim(20, 1, 2)
+    main_sim(20, 2, 2)
