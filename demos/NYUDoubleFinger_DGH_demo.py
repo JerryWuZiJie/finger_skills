@@ -63,10 +63,10 @@ def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
     q = np.array(cur_q)
     print('-' * 50)
     pin_robot.framesForwardKinematics(q)
-    pose_tran = pin.updateFramePlacement(
+    pose_ee = pin.updateFramePlacement(
         pin_robot.model, pin_robot.data, FRAME_ID).translation
     print('\tdesire pos:', des_pos)
-    print('\tcurrent pos:', pose_tran)
+    print('\tcurrent pos:', pose_ee)
     eps = 1e-4
     IT_MAX = 10000
     DT = 1
@@ -75,9 +75,9 @@ def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
 
     for _ in range(IT_MAX):
         pin_robot.framesForwardKinematics(q)
-        pose_tran = pin.updateFramePlacement(
+        pose_ee = pin.updateFramePlacement(
             pin_robot.model, pin_robot.data, FRAME_ID).translation
-        err = pose_tran - des_pos
+        err = pose_ee - des_pos
         if np.linalg.norm(err) < eps:
             print("\tConvergence achieved!")
             break
@@ -89,12 +89,13 @@ def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
     else:
         print("\n\tWarning: the iterative algorithm has not reached convergence to the desired precision\n")
 
-    print('\tfinal pos:', pose_tran)
+    q = q / 180 * np.pi
+    print('\tfinal pos:', pose_ee)
     print('\tresult:', q)
     print('\tfinal error:', err.T)
     print('\tfinal dt:', DT)
     print('-' * 50)
-    return q  # % (2*np.pi)
+    return q
 
 
 # controls for calculation ----------------------
