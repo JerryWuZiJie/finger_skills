@@ -3,6 +3,7 @@ This run on real robot
 '''
 import os
 import time
+import sys
 from threading import current_thread
 import numpy as np
 import matplotlib.pylab as plt
@@ -14,8 +15,18 @@ from robot_properties_nyu_finger.config import NYUFingerDoubleConfig0, NYUFinger
 from robot_properties_nyu_finger.wrapper import NYUFingerRobot
 
 from dynamic_graph_head import ThreadHead, SimHead, SimVicon, HoldPDController
-# import dynamic_graph_manager_cpp_bindings
+import dynamic_graph_manager_cpp_bindings
 
+
+# param
+PD_0 =np.array([3.]*3)
+PD_1 = np.array([.1]*3)
+VEL_0 = 1
+VEL_1 = np.array([.3]*3)
+IMP_0 = np.diag([50, 50, 10])
+IMP_1 = np.diag([5, 5, 0])
+IMP_H_0 = np.diag([10]*3)
+IMP_H_1 = np.diag([5]*3)
 
 # function to calculate robot kinematics ----------------------
 def cal_pose(pin_robot, id_ee):
@@ -161,7 +172,7 @@ class ImpedanceControl(Control):
 
 # controllers for running ----------------------
 class Controller:
-    def __init__(self, head, id_ee, param0, param1, control, dt=0.001, hold_time=1):
+    def __init__(self, head, id_ee, param0, param1, control, dt=0.001, hold_time=5):
         # setup head
         self.head = head
         # pos and vel is reference, will update automatically
@@ -182,9 +193,7 @@ class Controller:
             param1 = np.array([param1]*self.robot.nv)
         self.control = control(param0, param1)
         # move robot to it's initial position
-        K = np.diag([50]*3)
-        D = np.diag([5]*3)
-        self.position_control = ImpedanceControl(K, D)
+        self.position_control = ImpedanceControl(IMP_H_0, IMP_H_1)
         self.position_steps = int(hold_time/dt)
 
         # setup steps
@@ -318,49 +327,37 @@ def choose_controller(finger, control, head, id):
     if finger == 0:  # first finger
         if control == 0:
             # finger0 PD
-            P = np.array([4, 4, 3])
-            D = np.array([.5, .4, .2])
-            ctrl = PDController(head, id, P, D, np.array([0, 0, np.pi/2]))
+            ctrl = PDController(head, id, PD_0, PD_1, np.array([0, 0, np.pi/3]))
         elif control == 1:
             # finger0 velocity
-            gain = 1.
-            D = np.array([0.3, 0.3, 0.3])
             center = [-0.0506, -0.05945, 0.05]
             center[0] -= 0.1
             center[1] -= 0.05  # avoid two robot touching
             center[2] += 0.15
             radius = 0.04
             ctrl = VelocityController(
-                head, id, gain, D, center, radius, np.pi*3)
+                head, id, VEL_0, VEL_1, center, radius, np.pi*3)
         else:
             # # finger0 impedance
-            K = np.diag([50, 50, 10])
-            D = np.diag([5, 5, 0])
             ctrl = ImpedanceController(
-                head, id, K, D, np.array([-0.0506-0.1, -0.05945, 0.05+0.1]))
+                head, id, IMP_0, IMP_1, np.array([-0.0506-0.1, -0.05945, 0.05+0.1]))
     else:  # second finger
         if control == 0:
             # finger1 PD
-            P = np.array([4, 4, 3])
-            D = np.array([.5, .4, .2])
-            ctrl = PDController(head, id, P, D, np.array([0, 0, np.pi/2]))
+            ctrl = PDController(head, id, PD_0, PD_1, np.array([0, 0, np.pi/3]))
         elif control == 1:
             # finger1 velocity
-            gain = 1.
-            D = np.array([0.3, 0.3, 0.3])
             center = [0.0506947, 0.0594499, 0.05]
             center[0] += 0.1
             center[1] += 0.05  # avoid two robot touching
             center[2] += 0.15
             radius = 0.04
             ctrl = VelocityController(
-                head, id, gain, D, center, radius, -np.pi*3)
+                head, id, VEL_0, VEL_1, center, radius, -np.pi*3)
         else:
             # finger1 impedance
-            K = np.diag([50, 50, 10])
-            D = np.diag([5, 5, 0])
             ctrl = ImpedanceController(
-                head, id, K, D, np.array([0.051+0.1, 0.059, 0.05+0.1]))
+                head, id, IMP_0, IMP_1, np.array([0.051+0.1, 0.059, 0.05+0.1]))
     return ctrl
 
 
@@ -423,9 +420,7 @@ def main_sim(sim_time, finger0_controller=0, finger1_controller=0):
         thread_head.run_loop = False
 
     # set up end PD control
-    P = np.array([4, 4, 3])
-    D = np.array([.5, .4, .2])
-    end_ctrl = PDControl(P, D)
+    end_ctrl = PDControl(PD_0, PD_1)
     for _ in range(1000):
         for head in head_dict.values():
             head.read()
@@ -435,13 +430,14 @@ def main_sim(sim_time, finger0_controller=0, finger1_controller=0):
                 np.array([0.]*3), q, np.array([0.]*3), dq)
             head.set_control('ctrl_joint_torques', tau)
             head.write()
-            head.sim_step()
 
         # Step the actual simulation.
         bullet_env.step(sleep=True)
 
+    print('-'*10, 'exit', '-'*10)
 
-def main_real(finger0_controller=0, finger1_controller=0):
+
+def main_real(num=2, finger0_controller=0, finger1_controller=0):
     # setup some parameters that might not be used?
     dt = 0.001
     id0 = 'finger0_lower_to_tip_joint'
@@ -456,28 +452,30 @@ def main_real(finger0_controller=0, finger1_controller=0):
     head1 = dynamic_graph_manager_cpp_bindings.DGMHead(path1)
     head0.read()
     head1.read()
-    print(head0.get_sensor('slider_positions'))
-    print(head1.get_sensor('slider_positions'))
 
     # Create the safety controllers.
-    hold_pd_controller0 = HoldPDController(head0, 3., 0.05, with_sliders=True)
+    hold_pd_controller0 = HoldPDController(head0, 3., 0.05, with_sliders=False)
     hold_pd_controller1 = HoldPDController(head1, 3., 0.05, with_sliders=False)
-    head_dict = {'finger0': head0, 'finger1': head1}
+    holders = hold_pd_controller0 if num!=2 else [hold_pd_controller0, hold_pd_controller1]
+    head_dict = head0 if num!=2 else {'finger0': head0, 'finger1': head1}
 
-    # setup thread_head
-    thread_head = ThreadHead(
-        dt,
-        [hold_pd_controller0, hold_pd_controller1],
-        head_dict,
-        []
-    )
 
     # setup controller
     ctrl0 = choose_controller(0, finger0_controller, head0, id0)
     ctrl1 = choose_controller(1, finger1_controller, head1, id1)
+    controllers = ctrl0 if num!=2 else [ctrl0, ctrl1]
+
+    # setup thread_head
+    thread_head = ThreadHead(
+        dt,
+        holders,
+        head_dict,
+        []
+    )
+
 
     # Start the parallel processing.
-    thread_head.switch_controllers(ctrl0, ctrl1)
+    thread_head.switch_controllers(controllers)
     try:
         thread_head.start()
         thread_head.join()
@@ -488,9 +486,7 @@ def main_real(finger0_controller=0, finger1_controller=0):
         thread_head.run_loop = False
 
     # set up end PD control
-    P = np.array([4, 4, 3])
-    D = np.array([.5, .4, .2])
-    end_ctrl = PDControl(P, D)
+    end_ctrl = PDControl(PD_0, PD_1)
     for _ in range(1000):
         for head in head_dict.values():
             head.read()
@@ -502,7 +498,10 @@ def main_real(finger0_controller=0, finger1_controller=0):
             head.write()
             time.sleep(dt)
 
+    print('-'*10, 'exit', '-'*10)
+
 
 if __name__ == '__main__':
 
-    main_sim(8, 0, 1)
+    main_sim(8, 1, 1)
+    # main_real(1, 1, 1)
