@@ -57,41 +57,44 @@ def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
 
     # get frame id
     FRAME_ID = pin_robot.model.getFrameId(id_ee)
-    oMdes = np.array(des_pos)
+    des_pos = np.array(des_pos)
 
     # q = np.array(cur_q)  # make a copy of current position
-    q = np.array([0, 1/2, 1/2])
+    q = np.array(cur_q)
     print('-' * 50)
     pin_robot.framesForwardKinematics(q)
     pose_tran = pin.updateFramePlacement(
         pin_robot.model, pin_robot.data, FRAME_ID).translation
-    print('desire pos', oMdes)
-    print('current pos', pose_tran)
+    print('\tdesire pos:', des_pos)
+    print('\tcurrent pos:', pose_tran)
     eps = 1e-4
-    IT_MAX = 10000*5
-    DT = 1e-1
+    IT_MAX = 10000
+    DT = 1
+    MIN_DT = 1e-3
     damp = 1e-12
 
     for _ in range(IT_MAX):
         pin_robot.framesForwardKinematics(q)
         pose_tran = pin.updateFramePlacement(
             pin_robot.model, pin_robot.data, FRAME_ID).translation
-        err = oMdes - pose_tran
+        err = pose_tran - des_pos
         if np.linalg.norm(err) < eps:
-            print("Convergence achieved!")
+            print("\tConvergence achieved!")
             break
         J = pin_robot.computeFrameJacobian(q, FRAME_ID)[:3]
         v = - J.T.dot(np.linalg.solve(J.dot(J.T) + damp * np.eye(3), err))
         q = pin.integrate(pin_robot.model, q, v*DT)
+        if DT > MIN_DT:
+            DT *= 0.99
     else:
-        print('final pos', pose_tran)
-        print("\nWarning: the iterative algorithm has not reached convergence to the desired precision")
+        print("\n\tWarning: the iterative algorithm has not reached convergence to the desired precision\n")
 
-    print('\nresult:', q)
-    print('\nfinal error:', err.T)
+    print('\tfinal pos:', pose_tran)
+    print('\tresult:', q)
+    print('\tfinal error:', err.T)
+    print('\tfinal dt:', DT)
     print('-' * 50)
-    sys.exit(0)
-    return q
+    return q  # % (2*np.pi)
 
 
 # controls for calculation ----------------------
@@ -450,4 +453,4 @@ if __name__ == '__main__':
     # handler to capture ctrl c
     signal.signal(signal.SIGINT, signal_handler)
 
-    main_sim(20, 2, 2)
+    main_sim(20, 1, 1)
