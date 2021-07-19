@@ -6,5 +6,3 @@ source ~/Projects/workspace/install/setup.sh
 
 code ~/Projects
 cd ~/Projects/finger_skills/demos
-rm *.mds
-echo 'Previous log files deleted'
