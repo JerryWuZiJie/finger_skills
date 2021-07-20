@@ -3,3 +3,9 @@
 
 # temp file
 test.py
+
+# ipython files
+.ipynb_checkpoints
+
+# setup bash
+setup.bash
