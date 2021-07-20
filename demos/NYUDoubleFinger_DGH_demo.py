@@ -18,21 +18,47 @@ from robot_properties_nyu_finger.wrapper import NYUFingerRobot
 from dynamic_graph_head import ThreadHead, SimHead, SimVicon, HoldPDController
 import dynamic_graph_manager_cpp_bindings
 
+# TODO:
+# implement PD controller interpolation
+# implement impedance controller interpolation
+# forward kinematic
 
-# param
+# setup some constants
+SIMULATION = True  # simulation or run on real robot
+SHOW_TIMING = False  # show timing log at the end
+# control for finger0 and finger1.    0: PD; 1: velocity; 2: impedance
+FINGER0_CONTROLLER = 1
+FINGER1_CONTROLLER = 0
+FINGER0_ONLY = False  # if true, only control finger0
+ID0 = 'finger0_lower_to_tip_joint'  # finger0 end effector id
+ID1 = 'finger1_lower_to_tip_joint'  # finger1 end effector id
+DT = 0.001  # step time
+# setup control parameters
 PD_P = np.array([1.]*3)
 PD_D = np.array([.1]*3)
-VEL_P = 3
-VEL_D = np.array([.3]*3)
-IMP_P = np.diag([50, 50, 20])
-IMP_D = np.diag([1., 1., 0])  # todo: it doesn't bounce at all
+VEL_P = 5
+VEL_D = np.array([.1]*3)
+IMP_P = np.diag([50, 50, 10])
+IMP_D = np.diag([1., 1., 0])
 IMP_H_P = np.diag([50.]*3)
-IMP_H_D = np.diag([.7]*3)
+IMP_H_D = np.diag([1.]*3)
 
-# function to calculate robot kinematics ----------------------
+# center for velocity and impedance control
+center = [0.0506947, 0.0594499, 0.05]  # init position
+# for velocity control
+center_vel = np.array(center)
+center_vel[0] += 0.1
+center_vel[1] += 0.05  # avoid two robot touching
+center_vel[2] += 0.15
+speed = np.pi*3
+radius = 0.05
+# for impedance control
+center_imp = np.array(center)
+center_imp[0] += 0.1
+center_imp[2] += 0.1
 
 
-def cal_pose(pin_robot, id_ee):
+def cal_forwardK(pin_robot, id_ee):
     '''
     calculate position matrix (transition and rotation)
     '''
@@ -65,8 +91,9 @@ def cal_oriented_j(pin_robot, id_ee, q):
 
 def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
     '''
-    given desire position, return desire q'''
-    # todo: calculate inverse kinematic
+    given desire position, return desire q
+    '''
+    # THIS DOESN'T WORK AND USE IMPEDANCE CONTROL INSTEAD!!!
 
     # get frame id
     FRAME_ID = pin_robot.model.getFrameId(id_ee)
@@ -113,14 +140,14 @@ def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
 
 # controls for calculation ----------------------
 class Control:
-    def __init__(self, param0, param1):
+    def __init__(self, P, D):
         # setup control parameters, eg. P and D/gain and D/spring and damping const
-        self.set_control(param0, param1)
+        self.set_control(P, D)
 
-    def set_control(self, param0, param1):
+    def set_control(self, P, D):
         # setup control parameters
-        self.param0 = param0
-        self.param1 = param1
+        self.P = P
+        self.D = D
 
     def cal_torque(self):
         # given desire position and velocity, calculate the torques for all joints
@@ -135,7 +162,7 @@ class PDControl(Control):
         d_error = dq_ref - dq  # the velocity error for all the joints
 
         # calculate torque
-        joint_torques = self.param0 * error + self.param1 * d_error
+        joint_torques = self.P * error + self.D * d_error
 
         return joint_torques
 
@@ -151,10 +178,10 @@ class VelocityControl(Control):
             Jov_inv = np.linalg.pinv(Jov)
 
         # calculate torque
-        dx_des = dx_ref + self.param0 * (x_ref - x_meas)
+        dx_des = dx_ref + self.P * (x_ref - x_meas)
         dq_des = Jov_inv @ dx_des
         d_error = dq_des - dq
-        joint_torques = self.param1 * d_error
+        joint_torques = self.D * d_error
 
         return joint_torques
 
@@ -166,8 +193,8 @@ class ImpedanceControl(Control):
 
         # calculate torque
         dx_meas = Jov.dot(dq)
-        des_force = self.param0.dot(
-            x_ref - x_meas) + self.param1.dot(dx_ref - dx_meas)
+        des_force = self.P.dot(
+            x_ref - x_meas) + self.D.dot(dx_ref - dx_meas)
         joint_torques = Jov.T.dot(des_force)
 
         return joint_torques
@@ -224,10 +251,10 @@ class Controller:
         # use impedance control to make robot move to initial state
         if self.current_step <= self.position_steps:
             if type(self) != PDController:
-                pose_trans = cal_pose(self.robot, self.id).translation
+                pose_ee = cal_forwardK(self.robot, self.id).translation
                 oj = cal_oriented_j(self.robot, self.id, self.joint_positions)
                 self.tau = self.position_control.cal_torque(
-                    self.des_pos, pose_trans, np.zeros(self.robot.nq), self.joint_velocities, oj)
+                    self.des_pos, pose_ee, np.zeros(self.robot.nq), self.joint_velocities, oj)
                 self.head.set_control('ctrl_joint_torques', self.tau)
 
                 self.current_step += 1
@@ -241,9 +268,27 @@ class PDController(Controller):
         super().__init__(head, id_ee, param0, param1, PDControl)
         self.set_target(des_pos, des_vel)
 
-        # # calculate initial position in angle
-        # self.init_pos = self.des_pos
-        # self.init_vel = self.des_vel
+        # calculate interpolation trajectory
+        self.trajectory = self.interpolation_trajectory(TODO)
+        self.set_target(*self.trajectory[0])
+
+    @staticmethod
+    def interpolation_trajectory(th_init, th_goal, movement_duration, dt):  # todo
+        # first we compute the coefficients (as notes above)
+        a5 = 6/(movement_duration**5)
+        a4 = -15/(movement_duration**4)
+        a3 = 10/(movement_duration**3)
+        
+        # now we compute s and ds/dt
+        s = a3 * t**3 + a4 * t**4 + a5 * t**5
+        ds = 3 * a3 * t**2 + 4 * a4 * t**3 + 5 * a5 * t**4
+        
+        #now we compute th and dth/dt (the angle and its velocity)
+        th = th_init + s * (th_goal - th_init)
+        dth = (th_goal - th_init) * ds
+        
+        # we return the answer
+        return th, dth
 
     def run(self, thread):
         if super().run(thread):
@@ -256,25 +301,19 @@ class VelocityController(Controller):
     def __init__(self, head, id_ee, param0, param1, center, radius, speed=np.pi):
         super().__init__(head, id_ee, param0, param1, VelocityControl)
 
-        # calculate circle locus
-        self.locus = self.circular_locus(
-            center, radius, speed, self.dt)
-        self.set_target(*self.locus[0])
-
-        # # calculate initial position in angle
-        # self.init_pos = cal_inverseK(
-        #     self.robot, self.id, self.des_pos, self.joint_positions)
-        # self.init_vel = np.zeros(self.robot.nv)
+        # calculate circle trajectory
+        self.trajectory = self.circular_trajectory(center, radius, speed, self.dt)
+        self.set_target(*self.trajectory[0])
 
     @staticmethod
-    def circular_locus(center, radius, w, dt):
+    def circular_trajectory(center, radius, w, dt):
         '''
-        calculate desire circular locus in xz plane
+        calculate desire circular trajectory in xz plane
         '''
         # 2*np.pi, w*dt
 
         length = abs(int(2*np.pi / (w * dt)))
-        locus = []
+        trajectory = []
         for i in range(length):
             t = dt * i
             x_ref = np.array([center[0] + radius * np.sin(w * t),
@@ -283,23 +322,23 @@ class VelocityController(Controller):
             dx_ref = np.array([radius * w * np.cos(w * t),
                                0.,
                                -radius * w * np.sin(w * t)])
-            locus.append((x_ref, dx_ref))
+            trajectory.append((x_ref, dx_ref))
 
-        return locus
+        return trajectory
 
     def run(self, thread):
         if super().run(thread):
             # calculate position and oriented jacobian
-            pose_trans = cal_pose(self.robot, self.id).translation
+            pose_ee = cal_forwardK(self.robot, self.id).translation
             oj = cal_oriented_j(self.robot, self.id, self.joint_positions)
 
             self.tau = self.control.cal_torque(
-                self.des_pos, pose_trans, self.des_vel, self.joint_positions, self.joint_velocities, oj)
+                self.des_pos, pose_ee, self.des_vel, self.joint_positions, self.joint_velocities, oj)
             self.head.set_control('ctrl_joint_torques', self.tau)
 
             # update target
-            index = (self.current_step-self.position_steps) % len(self.locus)
-            self.set_target(*self.locus[index])
+            index = (self.current_step-self.position_steps) % len(self.trajectory)
+            self.set_target(*self.trajectory[index])
 
 
 class ImpedanceController(Controller):
@@ -315,11 +354,11 @@ class ImpedanceController(Controller):
     def run(self, thread):
         if super().run(thread):
             # calculate position and oriented jacobian
-            pose_trans = cal_pose(self.robot, self.id).translation
+            pose_ee = cal_forwardK(self.robot, self.id).translation
             oj = cal_oriented_j(self.robot, self.id, self.joint_positions)
 
             self.tau = self.control.cal_torque(
-                self.des_pos, pose_trans, self.des_vel, self.joint_velocities, oj)
+                self.des_pos, pose_ee, self.des_vel, self.joint_velocities, oj)
             self.head.set_control('ctrl_joint_torques', self.tau)
 
 
@@ -327,11 +366,6 @@ def choose_controller(finger, control, head, id):
     '''
     choose controller based on finger, return controller and q, dq
     '''
-    center = [0.0506947, 0.0594499, 0.05]  # init position
-    center[0] += 0.1
-    center[1] += 0.05  # avoid two robot touching
-    center[2] += 0.1
-    radius = 0.02
 
     if finger == 0:  # first finger
         if control == 0:
@@ -340,15 +374,18 @@ def choose_controller(finger, control, head, id):
                                 np.array([0, 0, np.pi/3]))
         elif control == 1:
             # finger0 velocity
-            center0 = center
-            center0[0] = -center[0]
-            center0[1] = -center[1]
+            center0 = np.array(center_vel)
+            center0[0] = -center_vel[0]
+            center0[1] = -center_vel[1]
             ctrl = VelocityController(
-                head, id, VEL_P, VEL_D, center0, radius, np.pi*3)
+                head, id, VEL_P, VEL_D, center0, radius, speed)
         else:
-            # # finger0 impedance
+            # finger0 impedance
+            center_imp0 = np.array(center_imp)
+            center_imp0[0] = -center_imp0[0]
+            center_imp0[1] = -center_imp0[1]
             ctrl = ImpedanceController(
-                head, id, IMP_P, IMP_D, np.array([-0.0506-0.1, -0.05945, 0.05+0.1]))
+                head, id, IMP_P, IMP_D, center_imp0)
     else:  # second finger
         if control == 0:
             # finger1 PD
@@ -356,25 +393,18 @@ def choose_controller(finger, control, head, id):
                                 np.array([0, 0, np.pi/3]))
         elif control == 1:
             # finger1 velocity
-            center1 = center
+            center1 = np.array(center_vel)
             ctrl = VelocityController(
-                head, id, VEL_P, VEL_D, center1, radius, -np.pi*3)
+                head, id, VEL_P, VEL_D, center1, radius, -speed)
         else:
             # finger1 impedance
+            center_imp1 = np.array(center_imp)
             ctrl = ImpedanceController(
-                head, id, IMP_P, IMP_D, np.array([0.051+0.1, 0.059, 0.05+0.1]))
+                head, id, IMP_P, IMP_D, center_imp1)
     return ctrl
 
 
 if __name__ == '__main__':
-    # setup some parameters
-    SIMULATION = 0
-    FINGER0_CONTROLLER = 2
-    FINGER1_CONTROLLER = 2
-    FINGER0_ONLY = False
-    ID0 = 'finger0_lower_to_tip_joint'
-    ID1 = 'finger1_lower_to_tip_joint'
-    DT = 0.001
 
     # setup head
     if SIMULATION:
@@ -454,7 +484,7 @@ if __name__ == '__main__':
             head.set_control('ctrl_joint_torques', np.array([0.]*3))
             head.write()
         print('-'*10, 'exit', '-'*10)
-        if SIMULATION:
+        if SHOW_TIMING:
             thread_head.plot_timing()
         # sys.exit(0)  # this raise error in ipython
 
