@@ -20,14 +20,14 @@ import dynamic_graph_manager_cpp_bindings
 
 
 # param
-PD_0 = np.array([1.]*3)
-PD_1 = np.array([.1]*3)
-VEL_0 = 3
-VEL_1 = np.array([.3]*3)
-IMP_0 = np.diag([50, 50, 10])
-IMP_1 = np.diag([5, 5, 0])
-IMP_H_0 = np.diag([50]*3)
-IMP_H_1 = np.diag([10]*3)
+PD_P = np.array([1.]*3)
+PD_D = np.array([.1]*3)
+VEL_P = 3
+VEL_D = np.array([.3]*3)
+IMP_P = np.diag([50, 50, 20])
+IMP_D = np.diag([1., 1., 0])  # todo: it doesn't bounce at all
+IMP_H_P = np.diag([50.]*3)
+IMP_H_D = np.diag([.7]*3)
 
 # function to calculate robot kinematics ----------------------
 
@@ -196,7 +196,7 @@ class Controller:
             param1 = np.array([param1]*self.robot.nv)
         self.control = control(param0, param1)
         # move robot to it's initial position
-        self.position_control = ImpedanceControl(IMP_H_0, IMP_H_1)
+        self.position_control = ImpedanceControl(IMP_H_P, IMP_H_D)
         self.position_steps = int(hold_time/dt)
 
         # setup steps
@@ -336,7 +336,7 @@ def choose_controller(finger, control, head, id):
     if finger == 0:  # first finger
         if control == 0:
             # finger0 PD
-            ctrl = PDController(head, id, PD_0, PD_1,
+            ctrl = PDController(head, id, PD_P, PD_D,
                                 np.array([0, 0, np.pi/3]))
         elif control == 1:
             # finger0 velocity
@@ -344,32 +344,32 @@ def choose_controller(finger, control, head, id):
             center0[0] = -center[0]
             center0[1] = -center[1]
             ctrl = VelocityController(
-                head, id, VEL_0, VEL_1, center0, radius, np.pi*3)
+                head, id, VEL_P, VEL_D, center0, radius, np.pi*3)
         else:
             # # finger0 impedance
             ctrl = ImpedanceController(
-                head, id, IMP_0, IMP_1, np.array([-0.0506-0.1, -0.05945, 0.05+0.1]))
+                head, id, IMP_P, IMP_D, np.array([-0.0506-0.1, -0.05945, 0.05+0.1]))
     else:  # second finger
         if control == 0:
             # finger1 PD
-            ctrl = PDController(head, id, PD_0, PD_1,
+            ctrl = PDController(head, id, PD_P, PD_D,
                                 np.array([0, 0, np.pi/3]))
         elif control == 1:
             # finger1 velocity
             center1 = center
             ctrl = VelocityController(
-                head, id, VEL_0, VEL_1, center1, radius, -np.pi*3)
+                head, id, VEL_P, VEL_D, center1, radius, -np.pi*3)
         else:
             # finger1 impedance
             ctrl = ImpedanceController(
-                head, id, IMP_0, IMP_1, np.array([0.051+0.1, 0.059, 0.05+0.1]))
+                head, id, IMP_P, IMP_D, np.array([0.051+0.1, 0.059, 0.05+0.1]))
     return ctrl
 
 
 if __name__ == '__main__':
     # setup some parameters
-    SIMULATION = False
-    FINGER0_CONTROLLER = 0
+    SIMULATION = 0
+    FINGER0_CONTROLLER = 2
     FINGER1_CONTROLLER = 2
     FINGER0_ONLY = False
     ID0 = 'finger0_lower_to_tip_joint'
@@ -406,6 +406,7 @@ if __name__ == '__main__':
         head1.read()
         head_dict = {'default': head0} if FINGER0_ONLY else {
             'finger0': head0, 'finger1': head1}
+        bullet_env = None
 
     # setup safety controllers to hold still when error occur
     safety_pd_controller0 = HoldPDController(
@@ -422,8 +423,8 @@ if __name__ == '__main__':
 
     # setup hold controllers for the end
     des_angle = np.zeros(3)
-    end_ctrl0 = PDController(head0, ID0, PD_0, PD_1, des_angle)
-    end_ctrl1 = PDController(head1, ID1, PD_0, PD_1, des_angle)
+    end_ctrl0 = PDController(head0, ID0, PD_P, PD_D, des_angle)
+    end_ctrl1 = PDController(head1, ID1, PD_P, PD_D, des_angle)
     end_controllers = [end_ctrl0, end_ctrl1]
 
     # setup thread_head
@@ -431,7 +432,8 @@ if __name__ == '__main__':
         DT,
         safety_controllers,
         head_dict,
-        []  # utils, no for now
+        [],  # utils, no for now
+        bullet_env
     )
 
     # call this function in ipython if try to stop the run
