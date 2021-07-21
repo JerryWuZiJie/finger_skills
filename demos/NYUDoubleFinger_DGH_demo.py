@@ -10,7 +10,6 @@ import numpy as np
 import matplotlib.pylab as plt
 import pinocchio as pin
 
-from bullet_utils.env import BulletEnvWithGround
 from bullet_utils.env import BulletEnv
 from robot_properties_nyu_finger.config import NYUFingerDoubleConfig0, NYUFingerDoubleConfig1
 from robot_properties_nyu_finger.wrapper import NYUFingerRobot
@@ -27,8 +26,8 @@ import dynamic_graph_manager_cpp_bindings
 SIMULATION = True  # simulation or run on real robot
 SHOW_TIMING = False  # show timing log at the end
 # control for finger0 and finger1.    0: PD; 1: velocity; 2: impedance
-FINGER0_CONTROLLER = 1
-FINGER1_CONTROLLER = 0
+FINGER0_CONTROLLER = 2
+FINGER1_CONTROLLER = 2
 FINGER0_ONLY = False  # if true, only control finger0
 ID0 = 'finger0_lower_to_tip_joint'  # finger0 end effector id
 ID1 = 'finger1_lower_to_tip_joint'  # finger1 end effector id
@@ -38,8 +37,8 @@ PD_P = np.array([1.]*3)
 PD_D = np.array([.1]*3)
 VEL_P = 5
 VEL_D = np.array([.1]*3)
-IMP_P = np.diag([50, 50, 10])
-IMP_D = np.diag([1., 1., 0])
+IMP_P = np.diag([50, 10, 50])
+IMP_D = np.diag([1., 0., 1.])
 IMP_H_P = np.diag([50.]*3)
 IMP_H_D = np.diag([1.]*3)
 
@@ -266,35 +265,64 @@ class Controller:
 class PDController(Controller):
     def __init__(self, head, id_ee, param0, param1, des_pos, des_vel=None):
         super().__init__(head, id_ee, param0, param1, PDControl)
-        self.set_target(des_pos, des_vel)
 
-        # calculate interpolation trajectory
-        self.trajectory = self.interpolation_trajectory(TODO)
-        self.set_target(*self.trajectory[0])
+        # set the target
+        self.reset_target(des_pos)
+
+    def reset_target(self, des_pos):
+        # transit time depends on diff on largest angle
+        self.transit_time = max(abs(des_pos - self.joint_positions))
+        if self.transit_time and int(self.transit_time/self.dt):
+            # calculate interpolation trajectory
+            self.trajectory = self.interpolation_trajectory(
+                np.array(self.joint_positions), des_pos, self.transit_time, self.dt)
+            self.set_target(*self.trajectory[0])
+        else:
+            self.set_target(des_pos)
+
+        return self.transit_time
 
     @staticmethod
-    def interpolation_trajectory(th_init, th_goal, movement_duration, dt):  # todo
-        # first we compute the coefficients (as notes above)
+    def interpolation_trajectory(th_init, th_goal, movement_duration, dt):
+        # compute coefficient
         a5 = 6/(movement_duration**5)
         a4 = -15/(movement_duration**4)
         a3 = 10/(movement_duration**3)
-        
-        # now we compute s and ds/dt
-        s = a3 * t**3 + a4 * t**4 + a5 * t**5
-        ds = 3 * a3 * t**2 + 4 * a4 * t**3 + 5 * a5 * t**4
-        
-        #now we compute th and dth/dt (the angle and its velocity)
-        th = th_init + s * (th_goal - th_init)
-        dth = (th_goal - th_init) * ds
-        
-        # we return the answer
-        return th, dth
+        diff = th_goal - th_init
+
+        trajectory = []
+        t = 0
+        for i in range(int(movement_duration/dt)):
+
+            # now we compute s and ds/dt
+            s = a3 * t**3 + a4 * t**4 + a5 * t**5
+            ds = 3 * a3 * t**2 + 4 * a4 * t**3 + 5 * a5 * t**4
+
+            # now we compute th and dth/dt (the angle and its velocity)
+            th = th_init + s * diff
+            dth = ds * diff
+
+            trajectory.append((th, dth))
+            t += dt
+
+        # make sure the last one has zero velocity
+        trajectory[-1] = (trajectory[-1][0], np.zeros_like(diff))
+
+        return trajectory
 
     def run(self, thread):
-        if super().run(thread):
-            self.tau = self.control.cal_torque(
-                self.des_pos, self.joint_positions, self.des_vel, self.joint_velocities)
-            self.head.set_control('ctrl_joint_torques', self.tau)
+        # update robot kinematics
+        self.robot.framesForwardKinematics(self.joint_positions)
+        self.current_step += 1
+
+        # calculate torque
+        self.tau = self.control.cal_torque(
+            self.des_pos, self.joint_positions, self.des_vel, self.joint_velocities)
+        self.head.set_control('ctrl_joint_torques', self.tau)
+
+        # update trajectory
+        if self.current_step < len(self.trajectory):
+            self.set_target(*self.trajectory[self.current_step])
 
 
 class VelocityController(Controller):
@@ -302,7 +330,8 @@ class VelocityController(Controller):
         super().__init__(head, id_ee, param0, param1, VelocityControl)
 
         # calculate circle trajectory
-        self.trajectory = self.circular_trajectory(center, radius, speed, self.dt)
+        self.trajectory = self.circular_trajectory(
+            center, radius, speed, self.dt)
         self.set_target(*self.trajectory[0])
 
     @staticmethod
@@ -337,7 +366,8 @@ class VelocityController(Controller):
             self.head.set_control('ctrl_joint_torques', self.tau)
 
             # update target
-            index = (self.current_step-self.position_steps) % len(self.trajectory)
+            index = (self.current_step -
+                     self.position_steps) % len(self.trajectory)
             self.set_target(*self.trajectory[index])
 
 
@@ -468,6 +498,10 @@ if __name__ == '__main__':
 
     # call this function in ipython if try to stop the run
     def stop(wait_time=1):
+        # set the trajectory for the PD controller
+        for control in end_controllers:
+            wait_time = max(wait_time, control.reset_target(np.zeros(3)))
+
         print('\n', '-'*50, sep='')
         print('Apply PD control to turn robot to origin pos')
         print('-'*50)
