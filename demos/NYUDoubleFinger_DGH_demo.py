@@ -8,6 +8,7 @@ import sys
 import numpy as np
 import matplotlib.pylab as plt
 import pinocchio as pin
+import pybullet
 
 from bullet_utils.env import BulletEnv
 from robot_properties_nyu_finger.config import NYUFingerDoubleConfig0, NYUFingerDoubleConfig1
@@ -17,11 +18,11 @@ from dynamic_graph_head import ThreadHead, SimHead, SimVicon, HoldPDController
 import dynamic_graph_manager_cpp_bindings
 
 # setup some constants
-SIMULATION = False  # simulation or run on real robot
+SIMULATION = True  # simulation or run on real robot
 SHOW_TIMING = False  # show timing log at the end
 # control for finger0 and finger1.    0: PD; 1: velocity; 2: impedance
-FINGER0_CONTROLLER = 1
-FINGER1_CONTROLLER = 2
+FINGER0_CONTROLLER = 0
+FINGER1_CONTROLLER = 0
 FINGER0_ONLY = False  # if true, only control finger0
 ID0 = 'finger0_lower_to_tip_joint'  # finger0 end effector id
 ID1 = 'finger1_lower_to_tip_joint'  # finger1 end effector id
@@ -31,14 +32,14 @@ PD_P = np.array([1.]*3)
 PD_D = np.array([.1]*3)
 VEL_P = 5
 VEL_D = np.array([.1]*3)
-IMP_P = np.diag([50, 10, 50])
-IMP_D = np.diag([1., 0., 1.])
+IMP_P = np.diag([150, 150, 150])  # TODO: test from 50 if running on real robot!!!
+IMP_D = np.diag([1., 1., 1.])
 IMP_H_P = np.diag([50.]*3)
 IMP_H_D = np.diag([1.]*3)
 
 # final position
 # for PD control
-PD_DES = np.array([0, 0, np.pi/2])
+PD_DES = np.array([0, np.pi/3, -np.pi/3])
 
 center = [0.0506947, 0.0594499, 0.05]  # init position
 # for velocity control
@@ -185,9 +186,8 @@ def circular_trajectory(center, radius, w, dt):
 
     return trajectory
 
+
 # controls for calculation ----------------------
-
-
 class Control:
     def __init__(self, P, D):
         # setup control parameters, eg. P and D/gain and D/spring and damping const
@@ -333,8 +333,7 @@ class Controller:
             return True
 
 
-# not used for now
-class EndController(Controller):
+class PDController(Controller):
     '''
     control completely by PD, no impedance control
     '''
@@ -378,7 +377,7 @@ class EndController(Controller):
         self.head.set_control('ctrl_joint_torques', self.tau)
 
 
-class PDController(Controller):
+class NotUsePDController(Controller):
     def __init__(self, head, id_ee, PD_P, PD_D, des_pos_p, des_vel_p=None):
         super().__init__(head, id_ee, PD_P, PD_D, PDControl)
 
@@ -510,6 +509,11 @@ if __name__ == '__main__':
         head1 = SimHead(finger1, vicon_name='solo12', with_sliders=False)
         head_dict = {'default': head0} if FINGER0_ONLY else {
             'finger0': head0, 'finger1': head1}
+
+        # add a plane
+        plane = pybullet.loadURDF("urdf/plane.urdf")
+        pybullet.resetBasePositionAndOrientation(plane, [0., 0., 0.], (0., 0., 0., 1.))
+        pybullet.changeDynamics(plane, -1, lateralFriction=5., rollingFriction=0)
     else:
         # Create the dgm communication and instantiate the controllers.
         path0 = os.path.join(NYUFingerDoubleConfig0().dgm_yaml_dir,
@@ -579,8 +583,46 @@ if __name__ == '__main__':
             thread_head.plot_timing()
         # sys.exit(0)  # this raise error in ipython
 
+    def grasp_object():
+        set_point_0 = [
+            np.array([]),
+            np.array([]),
+            np.array([]),
+            np.array([]),
+            np.array([]),
+        ]
+        
+        set_point_1 = [
+            np.array([]),
+            np.array([]),
+            np.array([]),
+            np.array([]),
+            np.array([]),
+        ]
+
+        # TODO: initialize controller before thread_head start
+        ctrl0 = ImpedanceController(head0, id, IMP_P, IMP_D, [0.3, -0.25, 0.014])
+        ctrl1 = ImpedanceController(head0, id, IMP_P, IMP_D, [0.3, -0.25, 0.014])
+        controllers = [ctrl0, ctrl1]
+        
+        if SIMULATION:
+            # add box to simulation
+            box = pybullet.loadURDF("urdf/box.urdf")
+            pybullet.resetBasePositionAndOrientation(box, [0., 0., 0.], (0., 0., 0., 1.))
+            pybullet.changeDynamics(box, -1, lateralFriction=0.5, spinningFriction=0.5)
+        print('drop box')  # TODO: box facing wrong direction
+        # TODO: some error?
+
+        thread_head.switch_controllers(controllers)
+
     # Start the parallel processing.
     thread_head.switch_controllers(controllers)
     thread_head.start()
+
+    for control in controllers:
+        wait_time = max(0, control.transit_time)
+    time.sleep(wait_time)
+
+    grasp_object()
 
     # logging syntax in ipython: thread_head.start_logging(); time.sleep(1); thread_head.stop_logging()
