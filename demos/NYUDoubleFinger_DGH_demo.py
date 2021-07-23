@@ -4,6 +4,7 @@ This run on real robot
 import os
 import time
 import sys
+import threading
 
 import numpy as np
 import matplotlib.pylab as plt
@@ -18,7 +19,7 @@ from dynamic_graph_head import ThreadHead, SimHead, SimVicon, HoldPDController
 import dynamic_graph_manager_cpp_bindings
 
 # setup some constants
-SIMULATION = True  # simulation or run on real robot
+SIMULATION = False  # simulation or run on real robot
 SHOW_TIMING = False  # show timing log at the end
 # control for finger0 and finger1.    0: PD; 1: velocity; 2: impedance
 FINGER0_CONTROLLER = 0
@@ -28,14 +29,14 @@ ID0 = 'finger0_lower_to_tip_joint'  # finger0 end effector id
 ID1 = 'finger1_lower_to_tip_joint'  # finger1 end effector id
 DT = 0.001  # step time
 # setup control parameters
-PD_P = np.array([1.]*3)
+PD_P = np.array([1.]*3) 
 PD_D = np.array([.1]*3)
 VEL_P = 5
 VEL_D = np.array([.1]*3)
-IMP_P = np.diag([150, 150, 150])  # TODO: test from 50 if running on real robot!!!
-IMP_D = np.diag([1., 1., 1.])
-IMP_H_P = np.diag([50.]*3)
-IMP_H_D = np.diag([1.]*3)
+IMP_P = np.diag([50, 50, 50])
+IMP_D = np.diag([1., 0., 1.])
+IMP_H_P = np.diag([100.]*3)  # TODO: test on real robot carefully
+IMP_H_D = np.diag([1]*3)  # TODO: test on real robot carefully
 
 # final position
 # for PD control
@@ -251,7 +252,7 @@ class ImpedanceControl(Control):
 
 # controllers for running ----------------------
 class Controller:
-    def __init__(self, head, id_ee, P, D, control, dt=0.001):
+    def __init__(self, head, id_ee, P, D, control, dt=0.001, trans_coeff=10):
         # setup head
         self.head = head
         # pos and vel is reference, will update automatically
@@ -279,36 +280,38 @@ class Controller:
 
         # setup init_control
         self.init_control = ImpedanceControl(IMP_H_P, IMP_H_D)
+        self.trans_coeff = trans_coeff
 
     def set_target(self, des_pos, des_vel=None):
         # set des_pos
-        if type(des_pos) != np.ndarray:
-            des_pos = np.array([des_pos] * 3)
-        self.des_pos = des_pos
+        if type(des_pos) == float or type(des_pos) == int:
+                des_pos = [des_pos] * 3
+        self.des_pos = np.array(des_pos)
 
         # set des_vel
         if des_vel is None:
             des_vel = np.zeros(3)
-        else:
-            if type(des_vel) != np.ndarray:
-                des_vel = np.array([des_vel] * 3)
-        self.des_vel = des_vel
+        elif type(des_vel) == float or type(des_vel) == int:
+            des_vel = [des_vel] * 3
+        self.des_vel = np.array(des_vel)
 
-    def reset_init_trajectory(self):
+    def reset_trajectory(self):
         pose_ee = cal_forwardK(self.robot, self.id).translation
+
         # transit time depends on diff on largest angle
-        self.transit_time = max(abs(self.des_pos - pose_ee)) * 10
+        self.transit_time = max(abs(self.des_pos - pose_ee)) * self.trans_coeff
+
         # calculate interpolation trajectory
         if self.transit_time and int(self.transit_time/self.dt):
             self.init_trajectory = interpolation_trajectory(
                 pose_ee, self.des_pos, self.transit_time, self.dt, self.des_vel)
-        else:
+        else:  # the robot is already in position
             self.init_trajectory = [(self.des_pos, self.des_vel)]
 
     def warmup(self, thread):
         self.robot.framesForwardKinematics(self.joint_positions)
+        self.reset_trajectory()
         self.current_step = 0
-        self.reset_init_trajectory()
 
     def run(self, thread):
         # update robot kinematics
@@ -337,6 +340,7 @@ class PDController(Controller):
     '''
     control completely by PD, no impedance control
     '''
+
     def __init__(self, head, id_ee, PD_P, PD_D, des_pos_p, des_vel_p=None):
         super().__init__(head, id_ee, PD_P, PD_D, PDControl)
 
@@ -344,7 +348,7 @@ class PDController(Controller):
         des_vel = des_vel_p
         self.set_target(des_pos, des_vel)
 
-    def reset_init_trajectory(self):
+    def reset_trajectory(self):
         # transit time depends on diff on largest angle
         self.transit_time = max(abs(self.des_pos - self.joint_positions))
         # calculate interpolation trajectory
@@ -364,7 +368,7 @@ class PDController(Controller):
         if self.current_step < len(self.init_trajectory):
             temp_pos, temp_vel = self.init_trajectory[self.current_step]
         else:
-            temp_pos, temp_vel = self.des_pos, self.des_vel
+            temp_pos, temp_vel = self.init_trajectory[-1]
 
         # calculate position and oriented jacobian
         pose_ee = cal_forwardK(self.robot, self.id).translation
@@ -372,8 +376,8 @@ class PDController(Controller):
 
         # send torque
         self.tau = self.control.cal_torque(
-            self.des_pos, self.joint_positions,
-            self.des_vel, self.joint_velocities)
+            temp_pos, self.joint_positions,
+            temp_vel, self.joint_velocities)
         self.head.set_control('ctrl_joint_torques', self.tau)
 
 
@@ -398,16 +402,17 @@ class NotUsePDController(Controller):
 
     def run(self, thread):
         if super().run(thread):
+            temp_pos, temp_vel = self.init_trajectory[-1]
             # send torque
             self.tau = self.control.cal_torque(
-                self.des_pos_p, self.joint_positions,
-                self.des_vel_p, self.joint_velocities)
+                temp_pos, self.joint_positions,
+                temp_vel, self.joint_velocities)
             self.head.set_control('ctrl_joint_torques', self.tau)
 
 
 class VelocityController(Controller):
-    def __init__(self, head, id_ee, param0, param1, center, radius, speed=np.pi):
-        super().__init__(head, id_ee, param0, param1, VelocityControl)
+    def __init__(self, head, id_ee, param0, param1, center, radius, speed=np.pi, dt=0.001, trans_coeff=10):
+        super().__init__(head, id_ee, param0, param1, VelocityControl, dt, trans_coeff)
 
         # calculate circle path
         self.path = circular_trajectory(
@@ -432,20 +437,22 @@ class VelocityController(Controller):
 
 
 class ImpedanceController(Controller):
-    def __init__(self, head, id_ee, param0, param1, des_pos, des_vel=None):
-        super().__init__(head, id_ee, param0, param1, ImpedanceControl)
+    def __init__(self, head, id_ee, param0, param1, des_pos, des_vel=None, dt=0.001, trans_coeff=10):
+        super().__init__(head, id_ee, param0, param1, ImpedanceControl, dt, trans_coeff)
 
         self.set_target(des_pos, des_vel)
 
     def run(self, thread):
         if super().run(thread):
+            temp_pos, temp_vel = self.init_trajectory[-1]
+            
             # calculate position and oriented jacobian
             pose_ee = cal_forwardK(self.robot, self.id).translation
             oj = cal_oriented_j(self.robot, self.id, self.joint_positions)
 
             # send torque
             self.tau = self.control.cal_torque(
-                self.des_pos, pose_ee, self.des_vel, self.joint_velocities, oj)
+                temp_pos, pose_ee, temp_vel, self.joint_velocities, oj)
             self.head.set_control('ctrl_joint_torques', self.tau)
 
 
@@ -512,8 +519,10 @@ if __name__ == '__main__':
 
         # add a plane
         plane = pybullet.loadURDF("urdf/plane.urdf")
-        pybullet.resetBasePositionAndOrientation(plane, [0., 0., 0.], (0., 0., 0., 1.))
-        pybullet.changeDynamics(plane, -1, lateralFriction=5., rollingFriction=0)
+        pybullet.resetBasePositionAndOrientation(
+            plane, [0., 0., 0.], (0., 0., 0., 1.))
+        pybullet.changeDynamics(
+            plane, -1, lateralFriction=5., rollingFriction=0)
     else:
         # Create the dgm communication and instantiate the controllers.
         path0 = os.path.join(NYUFingerDoubleConfig0().dgm_yaml_dir,
@@ -547,6 +556,31 @@ if __name__ == '__main__':
     end_ctrl1 = PDController(head1, ID1, PD_P, PD_D, des_angle)
     end_controllers = [end_ctrl0, end_ctrl1]
 
+    # setup trajectory to grab a box
+    move_in = 0.04  # formula: mg=uF, Kx=F => x = mg/u/K = 0.5/2*9.8/0.5/100 approx 0.049 + 0.003 margin
+    lift_up = 0.1
+    shift = 0
+    set_point_0 = [
+        np.array([-0.15, 0.0, 0.1]),
+        np.array([-0.075+move_in, 0.0, 0.08]),
+        np.array([-0.075+move_in, 0.0, 0.08+lift_up]),
+        np.array([-0.075+move_in, 0.0, 0.08]),
+        np.array([-0.15, 0.0, 0.1]),
+    ]
+    set_point_1 = [
+        np.array([0.15, 0.0, 0.1]),
+        np.array([0.075-move_in, 0.0, 0.08]),
+        np.array([0.075-move_in, 0.0, 0.08+lift_up]),
+        np.array([0.075-move_in, 0.0, 0.08]),
+        np.array([0.15, 0.0, 0.1]),
+    ]
+    temp_speed = 15
+    grab_ctrl0 = ImpedanceController(
+        head0, ID0, IMP_H_P, IMP_H_D, set_point_0[0], trans_coeff=temp_speed)
+    grab_ctrl1 = ImpedanceController(
+        head1, ID1, IMP_H_P, IMP_H_D, set_point_1[0], trans_coeff=temp_speed)
+    grab_controllers = [grab_ctrl0, grab_ctrl1]
+
     # setup thread_head
     thread_head = ThreadHead(
         DT,
@@ -555,6 +589,22 @@ if __name__ == '__main__':
         [],  # utils, no for now
         bullet_env
     )
+
+    def grab_object():
+
+        # if SIMULATION:
+        #     # add box to simulation
+        #     box = pybullet.loadURDF("urdf/box.urdf")
+        #     pybullet.resetBasePositionAndOrientation(
+        #         box, [0., 0., 0.], (0., 0., 0., 1.))
+        #     pybullet.changeDynamics(
+        #         box, -1, lateralFriction=0.5, spinningFriction=0.5)
+
+        for i in range(len(set_point_0)):
+            grab_ctrl0.set_target(set_point_0[i])
+            grab_ctrl1.set_target(set_point_1[i])
+            thread_head.switch_controllers(grab_controllers)
+            time.sleep(max(grab_ctrl0.transit_time, grab_ctrl1.transit_time) + 0.5)
 
     # call this function in ipython if try to stop the run
     def stop(wait_time=1):
@@ -583,37 +633,19 @@ if __name__ == '__main__':
             thread_head.plot_timing()
         # sys.exit(0)  # this raise error in ipython
 
-    def grasp_object():
-        set_point_0 = [
-            np.array([]),
-            np.array([]),
-            np.array([]),
-            np.array([]),
-            np.array([]),
-        ]
-        
-        set_point_1 = [
-            np.array([]),
-            np.array([]),
-            np.array([]),
-            np.array([]),
-            np.array([]),
-        ]
+    def s():
+        # emergency stop
+        thread_head.run_loop = False
 
-        # TODO: initialize controller before thread_head start
-        ctrl0 = ImpedanceController(head0, id, IMP_P, IMP_D, [0.3, -0.25, 0.014])
-        ctrl1 = ImpedanceController(head0, id, IMP_P, IMP_D, [0.3, -0.25, 0.014])
-        controllers = [ctrl0, ctrl1]
-        
-        if SIMULATION:
-            # add box to simulation
-            box = pybullet.loadURDF("urdf/box.urdf")
-            pybullet.resetBasePositionAndOrientation(box, [0., 0., 0.], (0., 0., 0., 1.))
-            pybullet.changeDynamics(box, -1, lateralFriction=0.5, spinningFriction=0.5)
-        print('drop box')  # TODO: box facing wrong direction
-        # TODO: some error?
+        # set control torque to 0
+        for head in head_dict.values():
+            head.set_control('ctrl_joint_torques', np.array([0.]*3))
+            head.write()
 
-        thread_head.switch_controllers(controllers)
+    def grab_in_thread():
+        grab_object()
+
+    grab_thread = threading.Thread(target=grab_in_thread)
 
     # Start the parallel processing.
     thread_head.switch_controllers(controllers)
@@ -623,6 +655,7 @@ if __name__ == '__main__':
         wait_time = max(0, control.transit_time)
     time.sleep(wait_time)
 
-    grasp_object()
+    grab_thread.start()
+
 
     # logging syntax in ipython: thread_head.start_logging(); time.sleep(1); thread_head.stop_logging()
