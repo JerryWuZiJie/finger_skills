@@ -1,10 +1,14 @@
-import sys
+import os
 
-import gym
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+
+
+save_path = os.path.join("/home/jerry/Projects/finger_skills/src/finger_skills", 'model_state_dict')
+if not os.path.exists(save_path):
+    os.mkdir(save_path)
 
 
 class Network(nn.Module):
@@ -89,7 +93,8 @@ class PPO:
                 log_prob_cur = self.get_logprob(batch_obs, batch_acts)
                 ratio = torch.exp(log_prob_cur - log_prob_k)
                 clip = torch.clamp(ratio, 1-self.clip, 1+self.clip)
-                actor_loss = (-torch.min(ratio*A_k, clip*A_k)).mean()  # TODO: why mean()?
+                actor_loss = (-torch.min(ratio*A_k, clip*A_k)
+                              ).mean()  # TODO: why mean()?
 
                 self.actor_optim.zero_grad()
                 actor_loss.backward(retain_graph=True)
@@ -104,8 +109,8 @@ class PPO:
                 self.critic_optim.step()
 
         # save at the end of the training
-        torch.save(self.actor.state_dict(), './ppo_actor.pth')
-        torch.save(self.critic.state_dict(), './ppo_critic.pth')
+        torch.save(self.actor.state_dict(), os.path.join(save_path, 'ppo_actor.pth'))
+        torch.save(self.critic.state_dict(), os.path.join(save_path, 'ppo_critic.pth'))
 
     def rollout(self, current_iter):
         '''
@@ -125,7 +130,7 @@ class PPO:
 
             # iterate for one run
             for _ in range(self.max_step_per_episode):
-                if first_round and (current_iter%self.show_every == 0):
+                if first_round and (current_iter % self.show_every == 0):
                     if self.render:
                         self.env.render()
                     else:
@@ -196,32 +201,3 @@ class PPO:
         rtg.reverse()
 
         return torch.tensor(rtg, dtype=torch.float)
-
-
-def main():
-    actor_model = ''
-    critic_model = ''
-
-    env = gym.make('Pendulum-v0')
-    model = PPO(env, 0.005, 0.95, batch_size=4800, update_per_i=5,
-                max_step_per_episode=1000, clip=0.2, show_every=20, seed=0, render=True)
-                
-    # Tries to load in an existing actor/critic model to continue training on
-    if actor_model != '' and critic_model != '':
-        print(
-            f"Loading in {actor_model} and {critic_model}...", flush=True)
-        model.actor.load_state_dict(torch.load(actor_model))
-        model.critic.load_state_dict(torch.load(critic_model))
-        print(f"Successfully loaded.", flush=True)
-    # Don't train from scratch if user accidentally forgets actor/critic model
-    elif actor_model != '' or critic_model != '':
-        print(f"Error: Either specify both actor/critic models or none at all. We don't want to accidentally override anything!")
-        sys.exit(0)
-    else:
-        print(f"Training from scratch.", flush=True)
-
-    model.learn(5)
-
-
-if __name__ == '__main__':
-    main()
