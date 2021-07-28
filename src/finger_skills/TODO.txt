@@ -1,0 +1,6 @@
+observation: position of the finger tip and position of the box (maybe also orientation)
+reward: -(object_pose - goal_pose)^2
+action: torques
+done: if (object_pose - goal_pose)^2 < threshold
+
+how to setup loss since there's already a loss?
