@@ -2,65 +2,89 @@ import os
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 
+import policy_network
 
-save_path = os.path.join("/home/jerry/Projects/finger_skills/src/finger_skills", 'model_state_dict')
+
+save_path = os.path.join(
+    "/home/jerry/Projects/finger_skills/src/finger_skills", 'model_state_dict')
 if not os.path.exists(save_path):
     os.mkdir(save_path)
 
 
-class Network(nn.Module):
-    def __init__(self, in_dim, out_dim):
-        super(Network, self).__init__()
-        self.layer0 = nn.Linear(in_dim, 64)
-        self.layer1 = nn.Linear(64, 64)
-        self.layer2 = nn.Linear(64, out_dim)
-
-    def forward(self, obs):
-        if isinstance(obs, np.ndarray):
-            obs = torch.tensor(obs, dtype=torch.float)
-
-        a0 = F.relu(self.layer0(obs))
-        a1 = F.relu(self.layer1(a0))
-        out = self.layer2(a1)
-
-        return out
-
-        # TODO: return F.softmax(out)
-
-
 class PPO:
-    def __init__(self, env, lr, gamma, batch_size, update_per_i, max_step_per_episode, clip, show_every, seed=None, render=True):
-        if isinstance(seed, int):
-            torch.manual_seed(seed)
-            np.random.seed(seed=seed)
-        torch.autograd.set_detect_anomaly(True)
+    def __init__(self, env, lr, gamma, batch_size, update_per_i, max_step_per_episode, clip, show_every, seed=None, render=True, **hyperparameters):
+        # initialize hyperparameters
+        self._init_hyperparameters(hyperparameters)
 
         self.env = env
         self.obs_dim = env.observation_space.shape[0]
         self.act_dim = env.action_space.shape[0]
 
         # STEP 1: initialize actor critic
-        self.actor = Network(self.obs_dim, self.act_dim)
-        self.critic = Network(self.obs_dim, 1)
+        self.actor = policy_network.Network(self.obs_dim, self.act_dim)
+        self.critic = policy_network.Network(self.obs_dim, 1)
         # optimizer
-        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=lr)
-        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=lr)
-
-        # initialize hyperparameters
-        self.gamma = gamma
-        self.batch_size = batch_size
-        self.update_per_i = update_per_i
-        self.max_step_per_episode = max_step_per_episode
-        self.clip = clip
-        self.show_every = show_every
-        self.render = render
+        self.actor_optim = torch.optim.Adam(
+            self.actor.parameters(), lr=self.lr)
+        self.critic_optim = torch.optim.Adam(
+            self.critic.parameters(), lr=self.lr)
 
         # coveriance matrix for query action
         self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
         self.cov_mat = torch.diag(self.cov_var)
+
+    def _init_hyperparameters(self, hyperparameters):
+        """
+        Initialize default and custom values for hyperparameters
+
+        Parameters:
+                hyperparameters - the extra arguments included when creating the PPO model, should only include
+                                                        hyperparameters defined below with custom values.
+
+        Return:
+                None
+        """
+        # Initialize default values for hyperparameters ----
+
+        # Algorithm hyperparameters --
+
+        # Number of timesteps to run per batch
+        self.timesteps_per_batch = 4800
+        # Max number of timesteps per episode
+        self.max_timesteps_per_episode = 1600
+        # Number of times to update actor/critic per iteration
+        self.n_updates_per_iteration = 5
+        self.lr = 0.005                                 # Learning rate of actor optimizer
+        # Discount factor to be applied when calculating Rewards-To-Go
+        self.gamma = 0.95
+        # Recommended 0.2, helps define the threshold to clip the ratio during SGA
+        self.clip = 0.2
+
+        # Miscellaneous parameters --
+
+        # If we should render during rollout
+        self.render = True
+        self.render_every_i = 10                        # Only render every n iterations
+        # How often we save in number of iterations
+        self.save_freq = 10
+        # Sets the seed of our program, used for reproducibility of results
+        self.seed = None
+
+        # Change any default values to custom values for specified hyperparameters ----
+        for param, val in hyperparameters.items():
+            exec('self.' + param + ' = ' + str(val))
+
+        # Sets the seed if specified
+        if self.seed != None:
+            # Check if our seed is valid first
+            assert(type(self.seed) == int)
+
+            # Set the seed
+            torch.manual_seed(self.seed)
+            np.random.seed(seed=self.seed)
+            print(f"Successfully set seed to {self.seed}")
 
     def learn(self, total_iter):
         '''
@@ -88,7 +112,7 @@ class PPO:
             # get previous log_prob for actor
             log_prob_k = self.get_logprob(batch_obs, batch_acts).detach()
 
-            for _ in range(self.update_per_i):
+            for _ in range(self.n_updates_per_iteration):
                 # STEP 6: update actor
                 log_prob_cur = self.get_logprob(batch_obs, batch_acts)
                 ratio = torch.exp(log_prob_cur - log_prob_k)
@@ -107,10 +131,20 @@ class PPO:
                 self.critic_optim.zero_grad()
                 critic_loss.backward()
                 self.critic_optim.step()
+            
+            if current_iter % self.save_freq == 0:
+                self.save_state_dict()
 
         # save at the end of the training
-        torch.save(self.actor.state_dict(), os.path.join(save_path, 'ppo_actor.pth'))
-        torch.save(self.critic.state_dict(), os.path.join(save_path, 'ppo_critic.pth'))
+        self.save_state_dict()
+
+    def save_state_dict(self):
+        # save at the end of the training
+        torch.save(self.actor.state_dict(),
+                   os.path.join(save_path, 'ppo_actor.pth'))
+        torch.save(self.critic.state_dict(),
+                   os.path.join(save_path, 'ppo_critic.pth'))
+        print('state dicts saved successfully')
 
     def rollout(self, current_iter):
         '''
@@ -123,14 +157,14 @@ class PPO:
         batch_acts = []
 
         # iterate the batch
-        while current_steps < self.batch_size:
+        while current_steps < self.timesteps_per_batch:
             reward_list = []
             obs = self.env.reset()
             done = False
 
             # iterate for one run
-            for _ in range(self.max_step_per_episode):
-                if first_round and (current_iter % self.show_every == 0):
+            for _ in range(self.max_timesteps_per_episode):
+                if first_round and (current_iter % self.render_every_i == 0):
                     if self.render:
                         self.env.render()
                     else:

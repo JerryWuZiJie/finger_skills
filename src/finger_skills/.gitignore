@@ -1,2 +1,7 @@
 # model state_dict file
 model_state_dict
+
+# python run cache file
+__pycache__
+
+

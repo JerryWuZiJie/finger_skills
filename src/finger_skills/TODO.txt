@@ -3,4 +3,3 @@ reward: -(object_pose - goal_pose)^2
 action: torques
 done: if (object_pose - goal_pose)^2 < threshold
 
-how to setup loss since there's already a loss?

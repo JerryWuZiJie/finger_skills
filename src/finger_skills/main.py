@@ -1,5 +1,6 @@
 '''
-This file use to train/test the model
+This file use to train/test the model using PPO
+it only works for environment with continuous observation and action space
 '''
 
 import sys
@@ -10,15 +11,14 @@ import torch
 
 import ppo
 
+# TODO: hyperparameters/test
 
-def main(restart=False):
-
-    # make environment and model
-    env = gym.make('Pendulum-v0')
+def train(env, args):
+    
     model = ppo.PPO(env, 0.005, 0.95, batch_size=4800, update_per_i=5,
                 max_step_per_episode=1000, clip=0.2, show_every=20, seed=0, render=True)
 
-    if not restart:
+    if args.mode == 'restart':
         # Tries to load in an existing actor/critic model to continue training on
         actor_model = '/home/jerry/Projects/finger_skills/src/finger_skills/model_state_dict/TODO'
         critic_model = '/home/jerry/Projects/finger_skills/src/finger_skills/model_state_dict/TODO'
@@ -48,5 +48,26 @@ def main(restart=False):
     print('training done')
 
 
+def test(env, args):
+    pass
+
+
+def main(args):
+    # make environment and model
+    env = gym.make('Pendulum-v0')
+
+    if args.mode != 'test':
+        train(env, args)
+    else:
+        test(env, args)
+
+    env.close()
+
+
 if __name__ == '__main__':
-    main(restart=True)
+    class Temp:
+        hyperparameters = {}
+        mode = 'train'  # or 'test
+
+    args = Temp()
+    main(args)
