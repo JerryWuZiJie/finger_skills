@@ -2,7 +2,6 @@
 This run on real robot
 '''
 import os
-import re
 import time
 import sys
 import threading
@@ -17,22 +16,14 @@ from robot_properties_nyu_finger.config import NYUFingerDoubleConfig0, NYUFinger
 from robot_properties_nyu_finger.wrapper import NYUFingerRobot
 
 from dynamic_graph_head import ThreadHead, SimHead, SimVicon, HoldPDController
+
 try:
     import dynamic_graph_manager_cpp_bindings
 except ModuleNotFoundError as exc:
-    print('\n', '-'*50, '\n', exc, '\n', '-'*50, '\n')
-
-# get absolute path for finger_skills
-PARENT_FOLDER = 'finger_skills'
-current_path = os.getcwd()
-result = current_path.find(PARENT_FOLDER)
-if result == -1:
-    print('check directory path!!!')
-    sys.exit(0)
-current_path = current_path[:result+len(PARENT_FOLDER)]
+    print(exc)
 
 # setup some constants
-SIMULATION = True  # simulation or run on real robot
+SIMULATION = Trueg  # simulation or run on real robot
 SHOW_TIMING = False  # show timing log at the end
 # control for finger0 and finger1.    0: PD; 1: velocity; 2: impedance
 FINGER0_CONTROLLER = 0
@@ -42,7 +33,7 @@ ID0 = 'finger0_lower_to_tip_joint'  # finger0 end effector id
 ID1 = 'finger1_lower_to_tip_joint'  # finger1 end effector id
 DT = 0.001  # step time
 # setup control parameters
-PD_P = np.array([1.]*3) 
+PD_P = np.array([1.]*3)
 PD_D = np.array([.1]*3)
 VEL_P = 5
 VEL_D = np.array([.1]*3)
@@ -298,7 +289,7 @@ class Controller:
     def set_target(self, des_pos, des_vel=None):
         # set des_pos
         if type(des_pos) == float or type(des_pos) == int:
-                des_pos = [des_pos] * 3
+            des_pos = [des_pos] * 3
         self.des_pos = np.array(des_pos)
 
         # set des_vel
@@ -458,7 +449,7 @@ class ImpedanceController(Controller):
     def run(self, thread):
         if super().run(thread):
             temp_pos, temp_vel = self.init_trajectory[-1]
-            
+
             # calculate position and oriented jacobian
             pose_ee = cal_forwardK(self.robot, self.id).translation
             oj = cal_oriented_j(self.robot, self.id, self.joint_positions)
@@ -531,7 +522,7 @@ if __name__ == '__main__':
             'finger0': head0, 'finger1': head1}
 
         # add a plane
-        plane = pybullet.loadURDF(os.path.join(current_path, "src/urdf/plane.urdf"))
+        plane = pybullet.loadURDF("urdf/plane.urdf")
         pybullet.resetBasePositionAndOrientation(
             plane, [0., 0., 0.], (0., 0., 0., 1.))
         pybullet.changeDynamics(
@@ -605,19 +596,20 @@ if __name__ == '__main__':
 
     def grab_object():
 
-        if SIMULATION:
-            # add box to simulation
-            box = pybullet.loadURDF(os.path.join(current_path, "src/urdf/box.urdf"))
-            pybullet.resetBasePositionAndOrientation(
-                box, [0., 0., 0.], (0., 0., 0., 1.))
-            pybullet.changeDynamics(
-                box, -1, lateralFriction=0.5, spinningFriction=0.5)
+        # if SIMULATION:
+        #     # add box to simulation
+        #     box = pybullet.loadURDF("urdf/box.urdf")
+        #     pybullet.resetBasePositionAndOrientation(
+        #         box, [0., 0., 0.], (0., 0., 0., 1.))
+        #     pybullet.changeDynamics(
+        #         box, -1, lateralFriction=0.5, spinningFriction=0.5)
 
         for i in range(len(set_point_0)):
             grab_ctrl0.set_target(set_point_0[i])
             grab_ctrl1.set_target(set_point_1[i])
             thread_head.switch_controllers(grab_controllers)
-            time.sleep(max(grab_ctrl0.transit_time, grab_ctrl1.transit_time) + 0.5)
+            time.sleep(max(grab_ctrl0.transit_time,
+                       grab_ctrl1.transit_time) + 0.5)
 
     # call this function in ipython if try to stop the run
     def stop(wait_time=1):
@@ -669,6 +661,5 @@ if __name__ == '__main__':
     time.sleep(wait_time)
 
     grab_thread.start()
-
 
     # logging syntax in ipython: thread_head.start_logging(); time.sleep(1); thread_head.stop_logging()
