@@ -3,3 +3,10 @@ reward: -(object_pose - goal_pose)^2
 action: torques
 done: if (object_pose - goal_pose)^2 < threshold
 
+env method:
+    env.reset()
+    env.render()
+    env.step()
+    
+    env.observation_space.shape[0]
+    env.action_space.shape[0]
