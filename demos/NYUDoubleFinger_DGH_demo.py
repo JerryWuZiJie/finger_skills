@@ -515,14 +515,16 @@ if __name__ == '__main__':
     if SIMULATION:
         # init BulletEnv and setup robot ----------------------
         bullet_env = BulletEnv()  # BulletEnvWithGround()
+        # set initial view point
+        pybullet.resetDebugVisualizerCamera(.7, 0, -15, (0., 0., 0.2))
+        # Disable the gui controller as we don't use them.
+        pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_GUI,0)
 
         # Create a robot instance. This initializes the simulator as well.
         config0 = NYUFingerDoubleConfig0()
         config1 = NYUFingerDoubleConfig1()
         finger0 = NYUFingerRobot(config=config0)
         finger1 = NYUFingerRobot(config=config1)
-        id0 = 'finger0_lower_to_tip_joint'
-        id1 = 'finger1_lower_to_tip_joint'
         bullet_env.add_robot(finger0)
         bullet_env.add_robot(finger1)
         head0 = SimHead(finger0, vicon_name='solo12', with_sliders=False)
@@ -609,7 +611,7 @@ if __name__ == '__main__':
             # add box to simulation
             box = pybullet.loadURDF(os.path.join(current_path, "src/urdf/box.urdf"))
             pybullet.resetBasePositionAndOrientation(
-                box, [0., 0., 0.], (0., 0., 0., 1.))
+                box, [0., 0., 0.05], (0., 0., 0., 1.))
             pybullet.changeDynamics(
                 box, -1, lateralFriction=0.5, spinningFriction=0.5)
 
