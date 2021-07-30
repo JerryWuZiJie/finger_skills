@@ -6,7 +6,7 @@
   </contact>
   <collision>
       <geometry>
-          <box size="0.15 0.15 0.1"/>
+          <box size="0.1 0.1 0.1"/>
       </geometry>
   </collision>
   <inertial>
@@ -17,7 +17,7 @@
   <visual>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
-				<box size="0.15 0.15 0.1"/>
+				<box size="0.1 0.1 0.1"/>
       </geometry>
        <material name="green">
         <color rgba="1 1 1 1"/>
