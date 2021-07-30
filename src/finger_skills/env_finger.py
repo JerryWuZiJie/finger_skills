@@ -28,12 +28,8 @@ if result == -1:
 current_path = current_path[:result+len(PARENT_FOLDER)]
 
 # setup some constants
-SIMULATION = True  # simulation or run on real robot
-SHOW_TIMING = False  # show timing log at the end
-FINGER0_ONLY = False  # if true, only control finger0
 ID0 = 'finger0_lower_to_tip_joint'  # finger0 end effector id
 ID1 = 'finger1_lower_to_tip_joint'  # finger1 end effector id
-DT = 0.001  # step time
 
 
 def cal_forwardK(pin_robot, id_ee):
@@ -65,84 +61,6 @@ def cal_oriented_j(pin_robot, id_ee, q):
     Ad[3:, 3:] = pose.rotation
 
     return Ad @ body_jocobian
-
-
-def cal_inverseK(pin_robot, id_ee, des_pos, cur_q):
-    '''
-    given desire position, return desire q
-    '''
-    # THIS DOESN'T WORK AND USE IMPEDANCE CONTROL INSTEAD!!!
-
-    # get frame id
-    FRAME_ID = pin_robot.model.getFrameId(id_ee)
-    des_pos = np.array(des_pos)
-
-    # q = np.array(cur_q)  # make a copy of current position
-    q = np.array(cur_q)
-    print('-' * 50)
-    pin_robot.framesForwardKinematics(q)
-    pose_ee = pin.updateFramePlacement(
-        pin_robot.model, pin_robot.data, FRAME_ID).translation
-    print('\tdesire pos:', des_pos)
-    print('\tcurrent pos:', pose_ee)
-    eps = 1e-4
-    IT_MAX = 10000
-    DT = 1
-    MIN_DT = 1e-3
-    damp = 1e-12
-
-    for _ in range(IT_MAX):
-        pin_robot.framesForwardKinematics(q)
-        pose_ee = pin.updateFramePlacement(
-            pin_robot.model, pin_robot.data, FRAME_ID).translation
-        err = pose_ee - des_pos
-        if np.linalg.norm(err) < eps:
-            print("\tConvergence achieved!")
-            break
-        J = pin_robot.computeFrameJacobian(q, FRAME_ID)[:3]
-        v = - J.T.dot(np.linalg.solve(J.dot(J.T) + damp * np.eye(3), err))
-        q = pin.integrate(pin_robot.model, q, v*DT)
-        if DT > MIN_DT:
-            DT *= 0.99
-    else:
-        print("\n\tWarning: the iterative algorithm has not reached convergence to the desired precision\n")
-
-    q = q / 180 * np.pi
-    print('\tfinal pos:', pose_ee)
-    print('\tresult:', q)
-    print('\tfinal error:', err.T)
-    print('\tfinal dt:', DT)
-    print('-' * 50)
-    return q
-
-    '''
-    compute interpolated trajectory and return a list with pos and vel
-    '''
-    # compute coefficient
-    a5 = 6/(movement_duration**5)
-    a4 = -15/(movement_duration**4)
-    a3 = 10/(movement_duration**3)
-    diff = th_goal - th_init
-
-    trajectory = []
-    t = 0
-    for i in range(int(movement_duration/dt)):
-
-        # now we compute s and ds/dt
-        s = a3 * t**3 + a4 * t**4 + a5 * t**5
-        ds = 3 * a3 * t**2 + 4 * a4 * t**3 + 5 * a5 * t**4
-
-        # now we compute th and dth/dt (the angle and its velocity)
-        th = th_init + s * diff
-        dth = ds * diff
-
-        trajectory.append((th, dth))
-        t += dt
-
-    # make sure the last one has desired velocity (mostly zero)
-    trajectory[-1] = (trajectory[-1][0], des_vel)
-
-    return trajectory
 
 
 # controllers for running ----------------------
@@ -200,7 +118,18 @@ class Controller:
 
 
 class EnvFingers:
-    def __init__(self):
+    def __init__(self, des_pos, ee0_id=ID0, ee1_id=ID1):
+        # desired position of the box
+        self.des_pose = np.array(des_pos)
+        # threshold for done condition
+        self.threshold = 0.01 ** 2  # meter, it is the square of distance
+        # set initial box position
+        self.box_default_pos = [0., -0.2, 0.05]
+        self.box_default_ori = (0., 0., 0., 1.)
+        # end effector id
+        self.ee0_id = ee0_id
+        self.ee1_id = ee1_id
+
         # init BulletEnv
         self.bullet_env = BulletEnv()  # BulletEnvWithGround()
 
@@ -218,100 +147,101 @@ class EnvFingers:
         self.bullet_env.add_robot(self.finger1)
 
         # add a plane
-        plane = pybullet.loadURDF(os.path.join(
+        self.planeid = pybullet.loadURDF(os.path.join(
             current_path, "src/urdf/plane.urdf"))
         pybullet.resetBasePositionAndOrientation(
-            plane, [0., 0., 0.], (0., 0., 0., 1.))
+            self.planeid, [0., 0., 0.], (0., 0., 0., 1.))
         pybullet.changeDynamics(
-            plane, -1, lateralFriction=5., rollingFriction=0)
+            self.planeid, -1, lateralFriction=5., rollingFriction=0)
 
         # add a box
-        box = pybullet.loadURDF(os.path.join(
+        self.boxid = pybullet.loadURDF(os.path.join(
             current_path, "src/urdf/box.urdf"))
         pybullet.resetBasePositionAndOrientation(
-            box, [0., -0.2, 0.05], (0., 0., 0., 1.))
+            self.boxid, self.box_default_pos, self.box_default_ori)
         pybullet.changeDynamics(
-            box, -1, lateralFriction=0.5, spinningFriction=0.5)
+            self.boxid, -1, lateralFriction=0.5, spinningFriction=0.5)
+
+        # contruct name to id map
+        self.bullet_joint_map = {}
+        for ji in range(pybullet.getNumJoints(self.finger0.robotId)):
+            self.bullet_joint_map[pybullet.getJointInfo(self.finger0.robotId, ji)[1].decode("UTF-8")] = ji
 
     def reset(self):
         # set the robot initial state in theta
-        self.finger0.reset_state(np.zeros(self.finger0.nq), np.zeros(self.finger0.nv))
-        self.finger1.reset_state(np.zeros(self.finger1.nq), np.zeros(self.finger1.nv))
+        self.finger0.reset_state(
+            np.zeros(self.finger0.nq), np.zeros(self.finger0.nv))
+        self.finger1.reset_state(
+            np.zeros(self.finger1.nq), np.zeros(self.finger1.nv))
+        
+        # reset box position
+        pybullet.resetBasePositionAndOrientation(
+            self.boxid, self.box_default_pos, self.box_default_ori)
 
-        observation = None  # TODO
+        observation = np.array([*self.box_default_pos])  # TODO
         return observation
-    
+
     def step(self, action):
-        q0, dq0 = finger0.get_state()
-        q1, dq1 = finger1.get_state()
+        # update kinematic
+        q0, dq0 = self.finger0.get_state()
+        self.finger1.pin_robot.forwardKinematics(q0)
+        q1, dq1 = self.finger1.get_state()
+        self.finger1.pin_robot.forwardKinematics(q1)
+        # finger tip position
+        ee0_pose = cal_forwardK(self.finger0.pin_robot, self.ee0_id).translation
+        ee1_pose = cal_forwardK(self.finger1.pin_robot, self.ee1_id).translation
+        ee0_check = pybullet.getJointState(self.finger0.robotId, self.bullet_joint_map[self.ee0_id])
+        # print(ee0_pose, ee0_check)
+        # box position
+        box_pose = pybullet.getBasePositionAndOrientation(self.boxid)[0]
+
+        # finger0 control -------------------------------------------------------
+        joint_torques0 = np.random.normal(scale=0.05, size=self.finger0.nq)
+        self.finger0.send_joint_command(joint_torques0)
+        # -----------------------------------------------------------------------
+
+        # finger1 control -------------------------------------------------------
+        joint_torques1 = np.random.normal(scale=0.05, size=self.finger1.nq)
+        self.finger1.send_joint_command(joint_torques1)
+        # -----------------------------------------------------------------------
+
+        # we send them to the robot and do one simulation step
+        self.bullet_env.step(sleep=True)
+
+        # observation compose of finger tip position and box position
+        observation = [*ee0_pose, *ee1_pose, *box_pose]
+
+        # reward is the difference between box and desired location
+        reward = -sum((box_pose-self.des_pose)**2)
+
+        # done if box is close to desired location
+        if -reward < self.threshold:
+            done = True
+        else:
+            done = False
+
+        # info is None for now
+        info = None
 
         # TODO
-        pass
+        return observation, reward, done, info
 
     def render(self):
         # TODO
         pass
 
+    def close(self):
+        pybullet.disconnect()
+
 
 if __name__ == '__main__':
 
-    # init BulletEnv and setup robot ----------------------
-    bullet_env = BulletEnv()  # BulletEnvWithGround()
-    # set initial view point
-    pybullet.resetDebugVisualizerCamera(.7, 0, -15, (0., 0., 0.2))
-    # Disable the gui controller as we don't use them.
-    pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_GUI, 0)
+    env = EnvFingers(des_pos=[1, 1, 1])
 
-    # Create a robot instance. This initializes the simulator as well.
-    config0 = NYUFingerDoubleConfig0()
-    config1 = NYUFingerDoubleConfig1()
-    finger0 = NYUFingerRobot(config=config0)
-    finger1 = NYUFingerRobot(config=config1)
-    bullet_env.add_robot(finger0)
-    bullet_env.add_robot(finger1)
+    for i in range(1):
+        env.reset()
+        for i in range(1000):
+            obs, rew, done, info = env.step(None)
+        print(obs)
 
-    # add a plane
-    plane = pybullet.loadURDF(os.path.join(
-        current_path, "src/urdf/plane.urdf"))
-    pybullet.resetBasePositionAndOrientation(
-        plane, [0., 0., 0.], (0., 0., 0., 1.))
-    pybullet.changeDynamics(
-        plane, -1, lateralFriction=5., rollingFriction=0)
-
-    # add a box
-    box = pybullet.loadURDF(os.path.join(
-        current_path, "src/urdf/box.urdf"))
-    pybullet.resetBasePositionAndOrientation(
-        box, [0., -0.2, 0.05], (0., 0., 0., 1.))
-    pybullet.changeDynamics(
-        box, -1, lateralFriction=0.5, spinningFriction=0.5)
-
-    # set the robot initial state in theta
-    finger0.reset_state(np.zeros(finger0.nq), np.zeros(finger0.nv))
-    finger1.reset_state(np.zeros(finger1.nq), np.zeros(finger1.nv))
-
-    for i in range(1000000000000000):
-
-        # finger0 control -------------------------------------------------------
-        q, dq = finger0.get_state()
-        finger1.pin_robot.forwardKinematics(q)
-
-        # if i % 1000 == 0:
-        #     finger0.pin_robot.forwardKinematics(q)
-        #     pose_trans = cal_forwardK(finger0.pin_robot, ID0).translation
-        #     oj = cal_oriented_j(finger0.pin_robot, ID0, q)
-        #     print(pose_trans)
-
-        joint_torques0 = np.zeros(finger0.nq)
-        finger0.send_joint_command(joint_torques0)
-        # ------------------------------------------------------------------------
-
-        # finger1 control -------------------------------------------------------
-        q, dq = finger1.get_state()
-        finger1.pin_robot.forwardKinematics(q)
-        joint_torques1 = np.zeros(finger1.nv)
-        finger1.send_joint_command(joint_torques1)
-        # ------------------------------------------------------------------------
-
-        # we send them to the robot and do one simulation step
-        bullet_env.step(sleep=True)
+    env.close()

@@ -10,3 +10,8 @@ env method:
     
     env.observation_space.shape[0]
     env.action_space.shape[0]
+
+max_step: 20000
+
+Question:
+    the desired position: if I change it, the PPO won't work
