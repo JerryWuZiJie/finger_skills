@@ -2,21 +2,16 @@
 This run on real robot
 '''
 import os
-import re
 import time
 import sys
-import threading
 
 import numpy as np
-import matplotlib.pylab as plt
 import pinocchio as pin
 import pybullet
 
 from bullet_utils.env import BulletEnv
 from robot_properties_nyu_finger.config import NYUFingerDoubleConfig0, NYUFingerDoubleConfig1
 from robot_properties_nyu_finger.wrapper import NYUFingerRobot
-
-from dynamic_graph_head import ThreadHead, SimHead, SimVicon, HoldPDController
 
 # get absolute path for finger_skills
 PARENT_FOLDER = 'finger_skills'
@@ -64,23 +59,32 @@ def cal_oriented_j(pin_robot, id_ee, q):
 
 
 class EnvFingers:
-    def __init__(self, des_pos, render=True, ee0_id=ID0, ee1_id=ID1, dt=0.001):
-        # desired position of the box  # TODO: set to what?
+    class Space:
+        def __init__(self, shape):
+            self.shape = (shape,)
+
+    def __init__(self, des_pos=[0.2, 0, 0.05], render=True, ee0_id=ID0, ee1_id=ID1, dt=0.001):
+        # desired position of the box
         self.des_pose = np.array(des_pos)
         # threshold for done condition
         self.threshold = 0.005 # meter, it is the square of distance
+
         # set initial box position
         self.box_default_pos = [0., 0., 0.05]
         self.box_default_ori = (0., 0., 0., 1.)
         # set initial joint angle
-        self.finger_default_angle = [0., np.pi/4, -np.pi/4]
+        self.finger_default_angle = np.zeros(3)  # [0., np.pi/4, -np.pi/4]
         # end effector id
         self.ee0_id = ee0_id
         self.ee1_id = ee1_id
+
         # whether to render the env and delay in step
         self._render = render
         # steps time interval
         self._dt = dt
+
+        # max torque
+        self.max_torque = 2
 
         # init BulletEnv
         if render:
@@ -120,11 +124,10 @@ class EnvFingers:
             # add a ball as indication of desired position
             self.target = pybullet.loadURDF(os.path.join(current_path, "src/urdf/ball.urdf"))
             pybullet.resetBasePositionAndOrientation(self.target, self.des_pose, (0., 0., 0.5, 0.5))
-
-        # contruct name to id map  # TODO: finger1 map
-        self.bullet_joint_map = {}
-        for ji in range(pybullet.getNumJoints(self.finger0.robotId)):
-            self.bullet_joint_map[pybullet.getJointInfo(self.finger0.robotId, ji)[1].decode("UTF-8")] = ji
+        
+        # space
+        self.action_space = self.Space(self.finger0.nq+self.finger1.nq)
+        self.observation_space = self.Space(9)
 
     def reset(self):
         # set the robot initial state in theta
@@ -144,11 +147,14 @@ class EnvFingers:
         ee1_pose = cal_forwardK(self.finger1.pin_robot, self.ee1_id).translation
 
         # observation compose of finger tip position and box position
-        observation = [*ee0_pose, *ee1_pose, *self.des_pose]
+        observation = np.array([*ee0_pose, *ee1_pose, *self.des_pose])
 
         return observation
 
     def step(self, action):
+        # clip the aciton
+        action = np.clip(action, -self.max_torque, self.max_torque)
+
         # update kinematic
         q0, dq0 = self.finger0.get_state()
         self.finger0.pin_robot.forwardKinematics(q0)
@@ -158,26 +164,23 @@ class EnvFingers:
         # finger tip position
         ee0_pose = cal_forwardK(self.finger0.pin_robot, self.ee0_id).translation
         ee1_pose = cal_forwardK(self.finger1.pin_robot, self.ee1_id).translation
-        ee0_check = pybullet.getJointState(self.finger0.robotId, self.bullet_joint_map[self.ee0_id]) # not working
 
         # box position
         box_pose = pybullet.getBasePositionAndOrientation(self.boxid)[0]
 
         # finger0 control -------------------------------------------------------
-        joint_torques0 = np.zeros(3)
-        self.finger0.send_joint_command(joint_torques0)
+        self.finger0.send_joint_command(action[:3])
         # -----------------------------------------------------------------------
 
         # finger1 control -------------------------------------------------------
-        joint_torques1 = np.zeros(3)
-        self.finger1.send_joint_command(joint_torques1)
+        self.finger1.send_joint_command(action[3:])
         # -----------------------------------------------------------------------
 
         # delay the step if rendering
         self.bullet_env.step(sleep=self._render)
 
         # observation compose of finger tip position and box position
-        observation = [*ee0_pose, *ee1_pose, *box_pose]
+        observation = np.array([*ee0_pose, *ee1_pose, *box_pose])
 
         # reward is the difference between box and desired location
         reward = -sum((box_pose-self.des_pose)**2)
@@ -193,8 +196,8 @@ class EnvFingers:
 
         return observation, reward, done, info
 
-    def _render(self):
-        print("Rendering not supported")
+    def render(self):
+        pass
 
     def close(self):
         pybullet.disconnect()
@@ -202,12 +205,14 @@ class EnvFingers:
 
 if __name__ == '__main__':
 
-    env = EnvFingers(des_pos=[0.2, 0, 0.05], render=False)
-    obs = env.reset()
+    env = EnvFingers(des_pos=[0.2, 0, 0.05], render=True)
 
-    for i in range(20000000000000000):
-        obs, rew, done, info = env.step(None)
-        if i % 1000 == 0:
-            print(info)
+    for i in range(3):
+        done = False
+        obs = env.reset()
+        time.sleep(2)
+        while not done:
+            obs, rew, done, info = env.step(np.random.normal(scale=10, size=6))
+        print(i, 'DONE!!!')
 
     env.close()

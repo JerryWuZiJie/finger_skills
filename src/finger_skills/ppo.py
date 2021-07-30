@@ -105,7 +105,13 @@ class PPO:
         # STEP 2: in the loop
         while self.logger['i_so_far'] < total_iter:
             # STEP 3: collect set of trajectories
+            
+            print('start rollout')  # TODO
+            temp_start = time.time()
+
             batch_rews, batch_obs, batch_acts = self.rollout()
+
+            print('finish rollout: ', time.time() - temp_start)  # TODO
 
             self.logger['i_so_far'] += 1
 

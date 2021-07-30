@@ -1,20 +1,5 @@
-observation: position of the finger tip and position of the box (maybe also orientation)
-reward: -(object_pose - goal_pose)^2
-action: torques
-done: if (object_pose - goal_pose)^2 < threshold
-
-env method:
-    env.reset()
-    env.render()
-    env.step()
-    
-    env.observation_space.shape[0]
-    env.action_space.shape[0]
 
 max_step: 20000
 
-Question:
-    the desired position: if I change it, the PPO won't work
-    how to run without rendering?
-    possible to render sometime and not the other time?
-    initial position of the finger
+Now do fix initial position and fix desired position
+In future change to randon initial position and random desired position

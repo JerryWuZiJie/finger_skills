@@ -12,6 +12,7 @@ import torch
 import ppo
 import policy_network
 import eval_policy
+import env_finger
 
 
 def train(env, args):
@@ -91,7 +92,7 @@ def test(env, args):
 
 def main(args):
     # make environment and model
-    env = gym.make('Pendulum-v0')
+    env = env_finger.EnvFingers(render=args.hyperparameters['render'])
 
     if args.mode != 'test':
         train(env, args)
@@ -104,19 +105,19 @@ def main(args):
 if __name__ == '__main__':
     class Temp:
         hyperparameters = {
-            'timesteps_per_batch': 2048,
-            'max_timesteps_per_episode': 1600,
+            'timesteps_per_batch': 100_000,
+            'max_timesteps_per_episode': 20_000,
             'gamma': 0.99,
             'n_updates_per_iteration': 5,
             'lr': 3e-4,
             'clip': 0.2,
             'render': False,
-            'render_every_i': 10,
+            'render_every_i': 1,
             'save_freq': 10,
             'seed': 0,
         }
 
-        mode = 'test'  # train/restart/test
+        mode = 'train'  # train/restart/test
         iteration = 10  # iteration in train iterate through one batch, iteration in test iterate through one game
 
         actor_model = '/home/jerry/Projects/finger_skills/src/finger_skills/model_state_dict/ppo_actor.pth'
