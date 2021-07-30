@@ -15,3 +15,6 @@ max_step: 20000
 
 Question:
     the desired position: if I change it, the PPO won't work
+    how to run without rendering?
+    possible to render sometime and not the other time?
+    initial position of the finger
