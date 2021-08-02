@@ -96,7 +96,7 @@ class PPO:
         self.logger = {
             'delta_t': time.time(),
             'i_so_far': 0,          # iterations so far
-            # 'batch_lens': [],       # episodic lengths in batch
+            'batch_lens': [],       # episodic lengths in batch
             'batch_rews': [],       # episodic returns in batch
             'actor_losses': [],     # losses of actor network in current iteration
             'critic_losses': [],     # losses of critic network in current iteration
@@ -105,18 +105,10 @@ class PPO:
         # STEP 2: in the loop
         while self.logger['i_so_far'] < total_iter:
             # STEP 3: collect set of trajectories
-            
-            print('start rollout')  # TODO
-            temp_start = time.time()
 
-            batch_rews, batch_obs, batch_acts = self.rollout()
-
-            print('finish rollout: ', time.time() - temp_start)  # TODO
+            batch_rtg, batch_obs, batch_acts = self.rollout()
 
             self.logger['i_so_far'] += 1
-
-            # STEP 4: compute reward to go
-            batch_rtg = self.compute_rtg(batch_rews)
 
             # STEP 5: compute advantage estimation, A_k = Q - V
             V = self.critic(batch_obs).squeeze()
@@ -151,10 +143,11 @@ class PPO:
                 self.logger['actor_losses'].append(actor_loss.detach())
                 self.logger['critic_losses'].append(critic_loss.detach())
 
-            # print summary for every batch
+            # print summary
             self._log_summary()
 
             if self.logger['i_so_far'] % self.save_freq == 0:
+                # save state dict
                 self.save_state_dict()
 
         # save at the end of the training
@@ -205,16 +198,19 @@ class PPO:
                     break
 
             batch_rews.append(reward_list)
-
-        # store log info
-        self.logger['batch_rews'].append(batch_rews)
+            self.logger['batch_lens'].append(len(reward_list))
 
         # turn list into tensor and return
-        batch_rews = torch.tensor(batch_rews, dtype=torch.float)
         batch_obs = torch.tensor(batch_obs, dtype=torch.float)
         batch_acts = torch.tensor(batch_acts, dtype=torch.float)
 
-        return batch_rews, batch_obs, batch_acts
+        # STEP 4: compute reward to go
+        batch_rtg = self.compute_rtg(batch_rews)
+
+        # store log info
+        self.logger['batch_rews'] = batch_rews
+
+        return batch_rtg, batch_obs, batch_acts
 
     def get_action(self, obs):
         '''
@@ -276,7 +272,7 @@ class PPO:
         delta_t = (self.logger['delta_t'] - delta_t)
 
         i_so_far = self.logger['i_so_far']
-        # avg_ep_lens = np.mean(self.logger['batch_lens'])
+        avg_ep_lens = np.mean(self.logger['batch_lens'])
         avg_ep_rews = np.mean([np.sum(ep_rews)
                               for ep_rews in self.logger['batch_rews']])
         avg_actor_loss = np.mean([losses.float().mean()
@@ -285,7 +281,7 @@ class PPO:
                                      for losses in self.logger['critic_losses']])
 
         # Round decimal places for more aesthetic logging messages
-        # avg_ep_lens = str(round(avg_ep_lens, 2))
+        avg_ep_lens = str(round(avg_ep_lens, 2))
         avg_ep_rews = str(round(avg_ep_rews, 2))
         avg_actor_loss = str(round(avg_actor_loss, 5))
         avg_critic_losses = str(round(avg_critic_losses, 5))
@@ -294,7 +290,7 @@ class PPO:
         print(flush=True)
         print(
             f"-------------------- Iteration #{i_so_far} --------------------", flush=True)
-        # print(f"Average Episodic Length: {avg_ep_lens}", flush=True)
+        print(f"Average Episodic Length: {avg_ep_lens}", flush=True)
         print(f"Average Episodic Return: {avg_ep_rews}", flush=True)
         print(f"Average Loss: {avg_actor_loss}", flush=True)
         print(f"Iteration took: {delta_t} secs", flush=True)
@@ -302,7 +298,7 @@ class PPO:
         print(flush=True)
 
         # Reset batch-specific logging data
-        # self.logger['batch_lens'] = []
+        self.logger['batch_lens'] = []
         self.logger['batch_rews'] = []
         self.logger['actor_losses'] = []
-        self.logger['critic_losses']
+        self.logger['critic_losses'] = []

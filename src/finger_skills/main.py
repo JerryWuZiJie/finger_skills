@@ -6,7 +6,7 @@ it only works for environment with continuous observation and action space
 import sys
 import os
 
-import gym
+# import gym
 import torch
 
 import ppo
@@ -16,8 +16,8 @@ import env_finger
 
 
 DT = 0.01
-MAX_TIMESTEPS_PER_EPISODE = int(20/DT)
-TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 20
+MAX_TIMESTEPS_PER_EPISODE = int(10/DT)
+TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 10
 MODE = 0
 
 RENDER = False
@@ -51,7 +51,7 @@ def train(env, args):
                 f"Loading in {os.path.basename(args.actor_model)} and {os.path.basename(args.critic_model)}...")
             model.actor.load_state_dict(torch.load(args.actor_model))
             model.critic.load_state_dict(torch.load(args.critic_model))
-            print(f"Successfully loaded.")
+            print(f"Successfully loaded state dicts.")
         # Don't train from scratch if user accidentally forgets actor/critic model
         elif args.actor_model != '' or args.critic_model != '':
             print(f"Error: Either specify both actor/critic models or none at all. We don't want to accidentally override anything!")
@@ -128,12 +128,12 @@ if __name__ == '__main__':
             'clip': 0.2,
             'render': RENDER,
             'render_every_i': 1,
-            'save_freq': 1,
+            'save_freq': 5,
             'seed': 0,
         }
 
         mode = MODE  # train/restart/test
-        iteration = 10  # iteration in train iterate through one batch, iteration in test iterate through one game
+        iteration = 100  # iteration in train iterate through one batch, iteration in test iterate through one game
 
         actor_model = '/home/jerry/Projects/finger_skills/src/finger_skills/model_state_dict/ppo_actor.pth'
         critic_model = '/home/jerry/Projects/finger_skills/src/finger_skills/model_state_dict/ppo_critic.pth'
