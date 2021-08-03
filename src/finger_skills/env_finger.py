@@ -58,6 +58,25 @@ def cal_oriented_j(pin_robot, id_ee, q):
     return Ad @ body_jocobian
 
 
+class ImpedanceControl():
+    def __init__(self, P, D):
+        # setup control parameters
+        self.P = P
+        self.D = D
+
+    def cal_torque(self, x_ref, x_meas, dx_ref, dq, jacobian):
+        # velocity part of jacobian
+        Jov = jacobian[:3]
+
+        # calculate torque
+        dx_meas = Jov.dot(dq)
+        des_force = self.P.dot(
+            x_ref - x_meas) + self.D.dot(dx_ref - dx_meas)
+        joint_torques = Jov.T.dot(des_force)
+
+        return joint_torques
+
+
 class EnvFingers:
     class Space:
         def __init__(self, shape):
@@ -67,7 +86,10 @@ class EnvFingers:
         # desired position of the box
         self.des_pose = np.array(des_pos)
         # threshold for done condition
-        self.threshold = 0.005 # meter, it is the square of distance
+        self.threshold = 0.005  # meter, it is the square of distance
+
+        # initialize impedance control
+        self.control = ImpedanceControl(np.diag([50]*3), np.diag([1.]*3))
 
         # set initial box position
         self.box_default_pos = [0., 0., 0.05]
@@ -83,18 +105,17 @@ class EnvFingers:
         # steps time interval
         self._dt = dt
 
-        # max torque
-        self.max_torque = 2
-
         # init BulletEnv
         if render:
-            self.bullet_env = BulletEnv(server=pybullet.GUI, dt=self._dt)  # BulletEnvWithGround()
+            self.bullet_env = BulletEnv(
+                server=pybullet.GUI, dt=self._dt)  # BulletEnvWithGround()
             # set initial view point
             pybullet.resetDebugVisualizerCamera(.7, 0, -15, (0., 0., 0.2))
             # Disable the gui controller as we don't use them.
             pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_GUI, 0)
         else:
-            self.bullet_env = BulletEnv(server=pybullet.DIRECT, dt=self._dt)  # BulletEnvWithGround()
+            self.bullet_env = BulletEnv(
+                server=pybullet.DIRECT, dt=self._dt)  # BulletEnvWithGround()
 
         # Create a robot instance
         config0 = NYUFingerDoubleConfig0()
@@ -122,18 +143,24 @@ class EnvFingers:
 
         if self._render:
             # add a ball as indication of desired position
-            self.target = pybullet.loadURDF(os.path.join(current_path, "src/urdf/ball.urdf"))
-            pybullet.resetBasePositionAndOrientation(self.target, self.des_pose, (0., 0., 0.5, 0.5))
-        
+            self.target = pybullet.loadURDF(
+                os.path.join(current_path, "src/urdf/ball.urdf"))
+            pybullet.resetBasePositionAndOrientation(
+                self.target, self.des_pose, (0., 0., 0.5, 0.5))
+
         # space
-        self.action_space = self.Space(self.finger0.nq+self.finger1.nq)
+        # (3 position + 3 velocity) * 2 fingers
+        self.action_space = self.Space(12)
+        # 3 position * 2 + 3 box position
         self.observation_space = self.Space(9)
 
     def reset(self):
         # set the robot initial state in theta
-        self.finger0.reset_state(self.finger_default_angle, np.zeros(self.finger0.nv))
-        self.finger1.reset_state(self.finger_default_angle, np.zeros(self.finger1.nv))
-        
+        self.finger0.reset_state(
+            self.finger_default_angle, np.zeros(self.finger0.nv))
+        self.finger1.reset_state(
+            self.finger_default_angle, np.zeros(self.finger1.nv))
+
         # reset box position
         pybullet.resetBasePositionAndOrientation(
             self.boxid, self.box_default_pos, self.box_default_ori)
@@ -143,8 +170,10 @@ class EnvFingers:
         self.finger0.pin_robot.forwardKinematics(q0)
         q1, dq1 = self.finger1.get_state()
         self.finger1.pin_robot.forwardKinematics(q1)
-        ee0_pose = cal_forwardK(self.finger0.pin_robot, self.ee0_id).translation
-        ee1_pose = cal_forwardK(self.finger1.pin_robot, self.ee1_id).translation
+        ee0_pose = cal_forwardK(self.finger0.pin_robot,
+                                self.ee0_id).translation
+        ee1_pose = cal_forwardK(self.finger1.pin_robot,
+                                self.ee1_id).translation
 
         # observation compose of finger tip position and box position
         observation = np.array([*ee0_pose, *ee1_pose, *self.des_pose])
@@ -152,8 +181,6 @@ class EnvFingers:
         return observation
 
     def step(self, action):
-        # clip the aciton
-        action = np.clip(action, -self.max_torque, self.max_torque)
 
         # update kinematic
         q0, dq0 = self.finger0.get_state()
@@ -162,37 +189,53 @@ class EnvFingers:
         self.finger1.pin_robot.forwardKinematics(q1)
 
         # finger tip position
-        ee0_pose = cal_forwardK(self.finger0.pin_robot, self.ee0_id).translation
-        ee1_pose = cal_forwardK(self.finger1.pin_robot, self.ee1_id).translation
+        ee0_pose = cal_forwardK(self.finger0.pin_robot,
+                                self.ee0_id).translation
+        ee1_pose = cal_forwardK(self.finger1.pin_robot,
+                                self.ee1_id).translation
+        # finger tip oriented jacobian
+        oj0 = cal_oriented_j(self.finger0.pin_robot, self.ee0_id, q0)
+        oj1 = cal_oriented_j(self.finger1.pin_robot, self.ee1_id, q1)
 
-        # box position
-        box_pose = pybullet.getBasePositionAndOrientation(self.boxid)[0]
+        # calculate torque
+        tau0 = self.control.cal_torque(
+            action[:3], ee0_pose, action[3:6], dq0, oj0)
+        tau1 = self.control.cal_torque(
+            action[6:9], ee1_pose, action[9:], dq1, oj1)
 
-        # finger0 control -------------------------------------------------------
-        self.finger0.send_joint_command(action[:3])
-        # -----------------------------------------------------------------------
-
-        # finger1 control -------------------------------------------------------
-        self.finger1.send_joint_command(action[3:])
-        # -----------------------------------------------------------------------
+        # send torque
+        self.finger0.send_joint_command(tau0)
+        self.finger1.send_joint_command(tau1)
 
         # delay the step if rendering
         self.bullet_env.step(sleep=self._render)
 
+        # box position
+        box_pose = pybullet.getBasePositionAndOrientation(self.boxid)[0]
+
         # observation compose of finger tip position and box position
         observation = np.array([*ee0_pose, *ee1_pose, *box_pose])
 
-        # reward is the difference between box and desired location
-        reward = -sum((box_pose-self.des_pose)**2)
+        # distance between box and desired location
+        box_des = sum((box_pose-self.des_pose)**2)
+
+        # reward is the negative of dist between box and des + fingers and box
+        reward = -box_des * 10 + \
+            (-sum((box_pose-ee0_pose)**2) -
+             sum((box_pose-ee1_pose)**2))
+        
+        reward *= 10  # TODO: reward is not significant
 
         # done if box is close to desired location
-        if -reward < self.threshold:
+        if box_des < self.threshold:
             done = True
+            # TODO: uncomment on next train
+            reward += 100  # make a big reward if solve the environment
         else:
             done = False
 
         # info
-        info = {}
+        info = {'reward: ': reward, }
 
         return observation, reward, done, info
 
@@ -207,12 +250,29 @@ if __name__ == '__main__':
 
     env = EnvFingers(des_pos=[0.2, 0, 0.05], render=True)
 
+    # position for finger 0
+    des_pos = [0.0506947, 0.0594499, 0.05]  # init position
+    des_pos_1 = np.array(des_pos)
+    des_pos_1[0] += 0.1
+    des_pos_1[2] += 0.1
+    # position for finger 1
+    des_pos_0 = np.array(des_pos_1)
+    des_pos_0[0] = -des_pos_0[0]
+    des_pos_0[1] = -des_pos_0[1]
+
+    action = np.concatenate(
+        (des_pos_0, np.zeros(3), des_pos_1, np.zeros(3)), axis=0)
+
     for i in range(3):
         done = False
         obs = env.reset()
-        time.sleep(2)
+        time.sleep(1)
+        count = 0
         while not done:
-            obs, rew, done, info = env.step(np.random.normal(scale=10, size=6))
+            obs, rew, done, info = env.step(np.zeros(12))
+            count += 1
+            if count % 1000 == 0:
+                print(info)
         print(i, 'DONE!!!')
 
     env.close()

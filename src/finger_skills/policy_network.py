@@ -10,20 +10,22 @@ import torch.nn.functional as F
 
 
 class Network(nn.Module):
-    def __init__(self, in_dim, out_dim, hidden_layer=[64, 64]):
+    def __init__(self, in_dim, out_dim, hidden_layer=[64, 64], activation=nn.ReLU):
         super(Network, self).__init__()
-        self.layer0 = nn.Linear(in_dim, 64)
-        self.layer1 = nn.Linear(64, 64)
-        self.layer2 = nn.Linear(64, out_dim)
+
+        # first layer
+        layers = [nn.Linear(in_dim, hidden_layer[0]), activation()]
+        # hidden layers
+        for i in range(len(hidden_layer)-1):
+            layers.append(nn.Linear(hidden_layer[i], hidden_layer[i+1]))
+            layers.append(activation())
+        # output layer
+        layers.append(nn.Linear(hidden_layer[-1], out_dim))
+
+        self.net = nn.Sequential(*layers)
 
     def forward(self, obs):
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float)
 
-        # a0 = nn.ReLU(self.layer0(obs))
-        # a1 = nn.ReLU(self.layer1(a0))
-        a0 = F.relu(self.layer0(obs))
-        a1 = F.relu(self.layer1(a0))
-        out = self.layer2(a1)
-
-        return out
+        return self.net(obs)

@@ -16,9 +16,9 @@ import env_finger
 
 
 DT = 0.01
-MAX_TIMESTEPS_PER_EPISODE = int(10/DT)
-TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 10
-MODE = 0
+MAX_TIMESTEPS_PER_EPISODE = int(10/DT)  # 10s simulation
+TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 10  # 10 game in each iteration
+MODE = 1
 
 RENDER = False
 if MODE == 0:
@@ -122,7 +122,7 @@ if __name__ == '__main__':
         hyperparameters = {
             'timesteps_per_batch': TIMESTEPS_PER_BATCH,
             'max_timesteps_per_episode': MAX_TIMESTEPS_PER_EPISODE,
-            'gamma': 0.99,
+            'gamma': 1,  # no discount
             'n_updates_per_iteration': 5,
             'lr': 3e-4,
             'clip': 0.2,
