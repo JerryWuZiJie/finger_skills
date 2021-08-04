@@ -16,9 +16,9 @@ import env_finger
 
 
 DT = 0.01
-MAX_TIMESTEPS_PER_EPISODE = int(10/DT)  # 10s simulation
-TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 10  # 10 game in each iteration
-MODE = 1
+MAX_TIMESTEPS_PER_EPISODE = int(2/DT)  # 2s simulation
+TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 50  # 10 game in each iteration
+MODE = 0
 
 RENDER = False
 if MODE == 0:
@@ -33,7 +33,7 @@ elif MODE == 2:
 def train(env, args):
     print(f"Training")
 
-    model = ppo.PPO(env, **args.hyperparameters)
+    model = ppo.PPO(env, args.actor_model, args.critic_model, **args.hyperparameters)
 
     if args.mode != 'restart':
         # Tries to load in an existing actor/critic model to continue training on
@@ -105,24 +105,17 @@ def test(env, args):
     print('\n\nTesting done')
 
 
-def main(args):
-    # make environment and model
-    env = env_finger.EnvFingers(render=args.hyperparameters['render'], dt=DT)
-
-    if args.mode != 'test':
-        train(env, args)
+def main(model_path="/home/jerry/Projects/finger_skills/src/finger_skills/"):
+    if torch.cuda.is_available():
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
     else:
-        test(env, args)
+        torch.set_default_tensor_type('torch.FloatTensor')
 
-    env.close()
-
-
-if __name__ == '__main__':
     class Temp:
         hyperparameters = {
             'timesteps_per_batch': TIMESTEPS_PER_BATCH,
             'max_timesteps_per_episode': MAX_TIMESTEPS_PER_EPISODE,
-            'gamma': 1,  # no discount
+            'gamma': 0.95,  # no discount
             'n_updates_per_iteration': 5,
             'lr': 3e-4,
             'clip': 0.2,
@@ -135,8 +128,21 @@ if __name__ == '__main__':
         mode = MODE  # train/restart/test
         iteration = 100  # iteration in train iterate through one batch, iteration in test iterate through one game
 
-        actor_model = '/home/jerry/Projects/finger_skills/src/finger_skills/model_state_dict/ppo_actor.pth'
-        critic_model = '/home/jerry/Projects/finger_skills/src/finger_skills/model_state_dict/ppo_critic.pth'
+        actor_model = os.path.join(model_path, 'model_state_dict/ppo_actor.pth')
+        critic_model = os.path.join(model_path, 'model_state_dict/ppo_critic.pth')
 
     args = Temp()
-    main(args)
+
+    # make environment and model
+    env = env_finger.EnvFingers(render=args.hyperparameters['render'], dt=DT)
+
+    if args.mode != 'test':
+        train(env, args)
+    else:
+        test(env, args)
+
+    env.close()
+
+
+if __name__ == '__main__':
+    main()

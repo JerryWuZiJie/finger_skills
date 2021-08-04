@@ -1,0 +1,35 @@
+test:
+    setting:
+        gamma = 0.99
+        reward = -(box_des + (finger0_box+finger1_box)*0.5)
+    result: finger can stick to box, box doesn't move
+test:
+    setting:
+        gamma = 1  # no discount
+        reward = -(box_des * 10 + finger0_box+finger1_box)
+    result: finger close to box, box doesn't move
+test:
+    setting:
+        same as previous
+        reward += 100 if doesn
+    result: same as previous
+test:
+    setting:
+        gamma = 0.95  # no discount
+        reward = -(box_des * 10 + finger0_box+finger1_box)
+        if done, reward_list += 100
+    result: same as previous
+test:
+    setting:
+        same as previous
+        action space: remove speeds
+        observation space: add joint angles
+    result: same as previous
+test:
+    setting:
+        same as previous
+        max_step = 200 (2 seconds)
+    result:
+
+
+future test: reward to go divide by length; action space remove velocity; observation space include theta for every joints

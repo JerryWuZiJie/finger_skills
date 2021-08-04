@@ -1,5 +1,5 @@
 '''
-This run on real robot
+This is a simulation environment for reinforcement learning
 '''
 import os
 import time
@@ -149,10 +149,10 @@ class EnvFingers:
                 self.target, self.des_pose, (0., 0., 0.5, 0.5))
 
         # space
-        # (3 position + 3 velocity) * 2 fingers
-        self.action_space = self.Space(12)
-        # 3 position * 2 + 3 box position
-        self.observation_space = self.Space(9)
+        # (3 position) * 2 fingers
+        self.action_space = self.Space(6)
+        # (3 position+ 3 angle) * 2 + 3 box position
+        self.observation_space = self.Space(15)
 
     def reset(self):
         # set the robot initial state in theta
@@ -176,7 +176,7 @@ class EnvFingers:
                                 self.ee1_id).translation
 
         # observation compose of finger tip position and box position
-        observation = np.array([*ee0_pose, *ee1_pose, *self.des_pose])
+        observation = np.array([*ee0_pose, *q0, *ee1_pose, *q1, *self.des_pose])
 
         return observation
 
@@ -199,9 +199,9 @@ class EnvFingers:
 
         # calculate torque
         tau0 = self.control.cal_torque(
-            action[:3], ee0_pose, action[3:6], dq0, oj0)
+            action[:3], ee0_pose, np.zeros(3), dq0, oj0)
         tau1 = self.control.cal_torque(
-            action[6:9], ee1_pose, action[9:], dq1, oj1)
+            action[3:], ee1_pose, np.zeros(3), dq1, oj1)
 
         # send torque
         self.finger0.send_joint_command(tau0)
@@ -214,7 +214,7 @@ class EnvFingers:
         box_pose = pybullet.getBasePositionAndOrientation(self.boxid)[0]
 
         # observation compose of finger tip position and box position
-        observation = np.array([*ee0_pose, *ee1_pose, *box_pose])
+        observation = np.array([*ee0_pose, *q0, *ee1_pose, *q1, *box_pose])
 
         # distance between box and desired location
         box_des = sum((box_pose-self.des_pose)**2)
@@ -223,19 +223,15 @@ class EnvFingers:
         reward = -box_des * 10 + \
             (-sum((box_pose-ee0_pose)**2) -
              sum((box_pose-ee1_pose)**2))
-        
-        reward *= 10  # TODO: reward is not significant
 
         # done if box is close to desired location
         if box_des < self.threshold:
             done = True
-            # TODO: uncomment on next train
-            reward += 100  # make a big reward if solve the environment
         else:
             done = False
 
         # info
-        info = {'reward: ': reward, }
+        info = {'reward: ': reward}
 
         return observation, reward, done, info
 
@@ -269,7 +265,7 @@ if __name__ == '__main__':
         time.sleep(1)
         count = 0
         while not done:
-            obs, rew, done, info = env.step(np.zeros(12))
+            obs, rew, done, info = env.step(np.zeros(6))
             count += 1
             if count % 1000 == 0:
                 print(info)

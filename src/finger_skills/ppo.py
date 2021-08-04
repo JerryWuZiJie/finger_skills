@@ -8,14 +8,8 @@ import numpy as np
 import policy_network
 
 
-save_path = os.path.join(
-    "/home/jerry/Projects/finger_skills/src/finger_skills", 'model_state_dict')
-if not os.path.exists(save_path):
-    os.mkdir(save_path)
-
-
 class PPO:
-    def __init__(self, env, **hyperparameters):
+    def __init__(self, env, actor_save_path, critic_save_path, **hyperparameters):
         # initialize hyperparameters
         self._init_hyperparameters(hyperparameters)
 
@@ -35,6 +29,16 @@ class PPO:
         # coveriance matrix for query action
         self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
         self.cov_mat = torch.diag(self.cov_var)
+
+        # save model path
+        # create path
+        i = actor_save_path.rfind('/')
+        save_path = actor_save_path[:i]
+        if not os.path.exists(save_path):
+            os.mkdir(save_path)
+        # store path
+        self.a_path = actor_save_path
+        self.c_path = critic_save_path
 
     def _init_hyperparameters(self, hyperparameters):
         """
@@ -155,10 +159,8 @@ class PPO:
 
     def save_state_dict(self):
         # save at the end of the training
-        torch.save(self.actor.state_dict(),
-                   os.path.join(save_path, 'ppo_actor.pth'))
-        torch.save(self.critic.state_dict(),
-                   os.path.join(save_path, 'ppo_critic.pth'))
+        torch.save(self.actor.state_dict(), self.a_path)
+        torch.save(self.critic.state_dict(), self.c_path)
         print('state dicts saved successfully')
 
     def rollout(self):
@@ -194,8 +196,14 @@ class PPO:
                 reward_list.append(rew)
 
                 if done:
-                    first_round = False
+                    # TODO: increase reward
+                    for i in range(len(reward_list)):
+                        reward_list[i] += 100
                     break
+
+            # disable rendering for rest of the batch
+            if first_round:
+                first_round = False
 
             batch_rews.append(reward_list)
             self.logger['batch_lens'].append(len(reward_list))

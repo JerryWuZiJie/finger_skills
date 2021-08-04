@@ -1,5 +1,0 @@
-
-max_step: 20000
-
-Now do fix initial position and fix desired position
-In future change to randon initial position and random desired position
