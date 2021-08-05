@@ -18,7 +18,7 @@ import env_finger
 DT = 0.01
 MAX_TIMESTEPS_PER_EPISODE = int(2/DT)  # 2s simulation
 TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 50  # 10 game in each iteration
-MODE = 0
+MODE = 2
 
 RENDER = False
 if MODE == 0:

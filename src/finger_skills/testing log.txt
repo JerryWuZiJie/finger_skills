@@ -1,3 +1,5 @@
+Colab notebook: https://colab.research.google.com/drive/1W-29logeqAVvBBJrumpi3rBXi8ZZvFaZ?authuser=1#scrollTo=7Abmo7u-CacM
+
 test:
     setting:
         gamma = 0.99
@@ -29,7 +31,7 @@ test:
     setting:
         same as previous
         max_step = 200 (2 seconds)
-    result:
+    result: the two fingers are touching the box, but shaking
 
 
 future test: reward to go divide by length; action space remove velocity; observation space include theta for every joints

@@ -235,7 +235,7 @@ class PPO:
         # of the graph and just convert the action to numpy array.
         # log prob as tensor is fine. Our computation graph will
         # start later down the line.
-        return action.detach().numpy()  # TODO: why detach and numpy?
+        return action.cpu().detach().numpy()  # TODO: why detach and numpy?
 
     def get_logprob(self, obs, act):
         '''
@@ -283,9 +283,9 @@ class PPO:
         avg_ep_lens = np.mean(self.logger['batch_lens'])
         avg_ep_rews = np.mean([np.sum(ep_rews)
                               for ep_rews in self.logger['batch_rews']])
-        avg_actor_loss = np.mean([losses.float().mean()
+        avg_actor_loss = np.mean([losses.float().cpu().mean()
                                  for losses in self.logger['actor_losses']])
-        avg_critic_losses = np.mean([losses.float().mean()
+        avg_critic_losses = np.mean([losses.float().cpu().mean()
                                      for losses in self.logger['critic_losses']])
 
         # Round decimal places for more aesthetic logging messages
