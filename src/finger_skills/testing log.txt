@@ -32,6 +32,16 @@ test:
         same as previous
         max_step = 200 (2 seconds)
     result: the two fingers are touching the box, but shaking
+test:
+    setting:
+        same as previous
+        action space change absolute position to relative position
+    result: finger way off the box
+test:
+    setting:
+        same as previous
+        training samples data from mini batch (size of 100)
+    result: finger way off the box
 
 
 future test: reward to go divide by length; action space remove velocity; observation space include theta for every joints

@@ -112,39 +112,48 @@ class PPO:
 
             batch_rtg, batch_obs, batch_acts = self.rollout()
 
+            # stack the data and create dataloader to draw mini batch
+            batch_data = torch.hstack([batch_rtg, batch_obs, batch_acts])
+            train_batch = torch.utils.data.DataLoader(batch_data, batch_size=100, shuffle=True)
+
             self.logger['i_so_far'] += 1
 
-            # STEP 5: compute advantage estimation, A_k = Q - V
-            V = self.critic(batch_obs).squeeze()
-            A_k = batch_rtg - V.detach()  # TODO: detach
-            # normalize A_k
-            A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
+            # train for mini batch
+            for mini_batch in train_batch:
+                mbatch_rtg = mini_batch[:, :1]
+                mbatch_obs = mini_batch[:, 1:1+self.obs_dim]
+                mbatch_acts = mini_batch[:, -self.act_dim:]
 
-            # get previous log_prob for actor
-            log_prob_k = self.get_logprob(batch_obs, batch_acts).detach()
+                # STEP 5: compute advantage estimation, A_k = Q - V
+                V = self.critic(mbatch_obs)
+                A_k = mbatch_rtg - V.detach()
+                # normalize A_k
+                A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
 
-            for _ in range(self.n_updates_per_iteration):
-                # STEP 6: update actor
-                log_prob_cur = self.get_logprob(batch_obs, batch_acts)
-                ratio = torch.exp(log_prob_cur - log_prob_k)
-                clip = torch.clamp(ratio, 1-self.clip, 1+self.clip)
-                actor_loss = (-torch.min(ratio*A_k, clip*A_k)
-                              ).mean()  # TODO: why mean()?
+                # get previous log_prob for actor
+                log_prob_k = self.get_logprob(mbatch_obs, mbatch_acts).detach()
 
-                self.actor_optim.zero_grad()
-                actor_loss.backward(retain_graph=True)
-                self.actor_optim.step()
+                for _ in range(self.n_updates_per_iteration):
+                    # STEP 6: update actor
+                    log_prob_cur = self.get_logprob(mbatch_obs, mbatch_acts)
+                    ratio = torch.exp(log_prob_cur - log_prob_k)
+                    clip = torch.clamp(ratio, 1-self.clip, 1+self.clip)
+                    actor_loss = (-torch.min(ratio*A_k, clip*A_k)).mean()
 
-                # TODO: STEP 7: update critic inside the loop?
-                current_V = self.critic(batch_obs).squeeze()
-                critic_loss = nn.MSELoss()(current_V, batch_rtg)
+                    self.actor_optim.zero_grad()
+                    actor_loss.backward(retain_graph=True)
+                    self.actor_optim.step()
+
+                    # Log actor loss
+                    self.logger['actor_losses'].append(actor_loss.detach())
+
+                # STEP 7: update critic
+                current_V = self.critic(mbatch_obs)
+                critic_loss = nn.MSELoss()(current_V, mbatch_rtg)
 
                 self.critic_optim.zero_grad()
                 critic_loss.backward()
                 self.critic_optim.step()
-
-                # Log actor loss
-                self.logger['actor_losses'].append(actor_loss.detach())
                 self.logger['critic_losses'].append(critic_loss.detach())
 
             # print summary
@@ -196,7 +205,7 @@ class PPO:
                 reward_list.append(rew)
 
                 if done:
-                    # TODO: increase reward
+                    # increase reward if solve the environment
                     for i in range(len(reward_list)):
                         reward_list[i] += 100
                     break
@@ -235,7 +244,7 @@ class PPO:
         # of the graph and just convert the action to numpy array.
         # log prob as tensor is fine. Our computation graph will
         # start later down the line.
-        return action.cpu().detach().numpy()  # TODO: why detach and numpy?
+        return action.cpu().detach().numpy()
 
     def get_logprob(self, obs, act):
         '''
@@ -256,7 +265,7 @@ class PPO:
             discounted_rew = 0
             for rew in reversed(rews):
                 discounted_rew = rew + self.gamma*discounted_rew
-                rtg.append(discounted_rew)
+                rtg.append([discounted_rew])
 
         rtg.reverse()
 

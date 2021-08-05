@@ -149,9 +149,9 @@ class EnvFingers:
                 self.target, self.des_pose, (0., 0., 0.5, 0.5))
 
         # space
-        # (3 position) * 2 fingers
+        # (3 relative position) * 2 fingers
         self.action_space = self.Space(6)
-        # (3 position+ 3 angle) * 2 + 3 box position
+        # (3 position + 3 angle) * 2 + 3 box position
         self.observation_space = self.Space(15)
 
     def reset(self):
@@ -199,9 +199,9 @@ class EnvFingers:
 
         # calculate torque
         tau0 = self.control.cal_torque(
-            action[:3], ee0_pose, np.zeros(3), dq0, oj0)
+            ee0_pose+action[:3], ee0_pose, np.zeros(3), dq0, oj0)
         tau1 = self.control.cal_torque(
-            action[3:], ee1_pose, np.zeros(3), dq1, oj1)
+            ee1_pose+action[3:], ee1_pose, np.zeros(3), dq1, oj1)
 
         # send torque
         self.finger0.send_joint_command(tau0)
