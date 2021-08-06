@@ -113,8 +113,10 @@ class PPO:
 
             # stack the data and create dataloader to draw mini batch
             batch_data = torch.hstack([batch_rtg, batch_obs, batch_acts])
-            generator = torch.Generator(device='cuda' if torch.cuda.is_available() else 'cpu')
-            train_batch = torch.utils.data.DataLoader(batch_data, batch_size=100, shuffle=True, generator=generator)
+            generator = torch.Generator(
+                device='cuda' if torch.cuda.is_available() else 'cpu')
+            train_batch = torch.utils.data.DataLoader(
+                batch_data, batch_size=100, shuffle=True, generator=generator)
 
             self.logger['i_so_far'] += 1
 

@@ -11,19 +11,18 @@ import torch.nn.functional as F
 
 def mlp(in_dim, out_dim, hidden_layer, activation):
 
-        # first layer
-        layers = [nn.Linear(in_dim, hidden_layer[0]), activation()]
-        # hidden layers
-        for i in range(len(hidden_layer)-1):
-            layers.append(nn.Linear(hidden_layer[i], hidden_layer[i+1]))
-            layers.append(activation())
-        # output layer
-        layers.append(nn.Linear(hidden_layer[-1], out_dim))
+    # first layer
+    layers = [nn.Linear(in_dim, hidden_layer[0]), activation()]
+    # hidden layers
+    for i in range(len(hidden_layer)-1):
+        layers.append(nn.Linear(hidden_layer[i], hidden_layer[i+1]))
+        layers.append(activation())
+    # output layer
+    layers.append(nn.Linear(hidden_layer[-1], out_dim))
 
-        net = nn.Sequential(*layers)
+    net = nn.Sequential(*layers)
 
-        return net
-
+    return net
 
 
 class Network(nn.Module):

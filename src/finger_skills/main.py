@@ -18,7 +18,7 @@ import env_finger
 DT = 0.01
 MAX_TIMESTEPS_PER_EPISODE = int(2/DT)  # 2s simulation
 TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 50  # 10 game in each iteration
-MODE = 2
+MODE = 1
 
 RENDER = False
 if MODE == 0:
@@ -33,7 +33,8 @@ elif MODE == 2:
 def train(env, args):
     print(f"Training")
 
-    model = ppo.PPO(env, args.actor_model, args.critic_model, **args.hyperparameters)
+    model = ppo.PPO(env, args.actor_model, args.critic_model,
+                    **args.hyperparameters)
 
     if args.mode != 'restart':
         # Tries to load in an existing actor/critic model to continue training on
@@ -93,7 +94,8 @@ def test(env, args):
     policy = policy_network.ActorNetwork(obs_dim, act_dim)
 
     # Load in the actor model saved by the PPO algorithm
-    policy.load_state_dict(torch.load(args.actor_model))
+    policy.load_state_dict(torch.load(
+        args.actor_model, map_location=torch.device('cpu')))
 
     # Evaluate our policy with a separate module, eval_policy, to demonstrate
     # that once we are done training the model/policy with ppo.py, we no longer need
@@ -130,8 +132,10 @@ def main(model_path="/home/jerry/Projects/finger_skills/src/finger_skills/"):
         mode = MODE  # train/restart/test
         iteration = 100  # iteration in train iterate through one batch, iteration in test iterate through one game
 
-        actor_model = os.path.join(model_path, 'model_state_dict/ppo_actor.pth')
-        critic_model = os.path.join(model_path, 'model_state_dict/ppo_critic.pth')
+        actor_model = os.path.join(
+            model_path, 'model_state_dict/ppo_actor.pth')
+        critic_model = os.path.join(
+            model_path, 'model_state_dict/ppo_critic.pth')
 
     args = Temp()
 

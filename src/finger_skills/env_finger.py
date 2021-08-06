@@ -175,8 +175,13 @@ class EnvFingers:
         ee1_pose = cal_forwardK(self.finger1.pin_robot,
                                 self.ee1_id).translation
 
+        # store desired position
+        self.ee0_des = ee0_pose
+        self.ee1_des = ee1_pose
+
         # observation compose of finger tip position and box position
-        observation = np.array([*ee0_pose, *q0, *ee1_pose, *q1, *self.des_pose])
+        observation = np.array(
+            [*ee0_pose, *q0, *ee1_pose, *q1, *self.des_pose])
 
         return observation
 
@@ -197,11 +202,15 @@ class EnvFingers:
         oj0 = cal_oriented_j(self.finger0.pin_robot, self.ee0_id, q0)
         oj1 = cal_oriented_j(self.finger1.pin_robot, self.ee1_id, q1)
 
+        # update desired position
+        self.ee0_des += action[:3]
+        self.ee1_des += action[3:]
+
         # calculate torque
         tau0 = self.control.cal_torque(
-            ee0_pose+action[:3], ee0_pose, np.zeros(3), dq0, oj0)
+            self.ee0_des, ee0_pose, np.zeros(3), dq0, oj0)
         tau1 = self.control.cal_torque(
-            ee1_pose+action[3:], ee1_pose, np.zeros(3), dq1, oj1)
+            self.ee1_des, ee1_pose, np.zeros(3), dq1, oj1)
 
         # send torque
         self.finger0.send_joint_command(tau0)
@@ -231,7 +240,7 @@ class EnvFingers:
             done = False
 
         # info
-        info = {'reward: ': reward}
+        info = {}
 
         return observation, reward, done, info
 
