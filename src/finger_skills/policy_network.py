@@ -9,9 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class Network(nn.Module):
-    def __init__(self, in_dim, out_dim, hidden_layer=[64, 64], activation=nn.ReLU):
-        super(Network, self).__init__()
+def mlp(in_dim, out_dim, hidden_layer, activation):
 
         # first layer
         layers = [nn.Linear(in_dim, hidden_layer[0]), activation()]
@@ -22,10 +20,32 @@ class Network(nn.Module):
         # output layer
         layers.append(nn.Linear(hidden_layer[-1], out_dim))
 
-        self.net = nn.Sequential(*layers)
+        net = nn.Sequential(*layers)
+
+        return net
+
+
+
+class Network(nn.Module):
+    def __init__(self, in_dim, out_dim, hidden_layer=[64, 64], activation=nn.ReLU):
+        super(Network, self).__init__()
+
+        self.net = mlp(in_dim, out_dim, hidden_layer, activation)
 
     def forward(self, obs):
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float)
 
         return self.net(obs)
+
+
+class ActorNetwork(Network):
+    def __init__(self, in_dim, out_dim, hidden_layer=[64, 64], activation=nn.ReLU):
+        super().__init__(in_dim, out_dim, hidden_layer=hidden_layer, activation=activation)
+
+        cov_var = torch.full(size=(out_dim,), fill_value=0.5)
+        self.cov = nn.Parameter(cov_var)
+
+
+class CriticNetwork(Network):
+    pass

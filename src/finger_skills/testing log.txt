@@ -42,6 +42,8 @@ test:
         same as previous
         training samples data from mini batch (size of 100)
     result: finger way off the box
-
-
-future test: reward to go divide by length; action space remove velocity; observation space include theta for every joints
+test:
+    setting:
+        same as previous
+        only record the trajectories that solve the environment
+    result: take too long to train

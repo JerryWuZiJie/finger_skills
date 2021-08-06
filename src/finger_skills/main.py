@@ -90,7 +90,7 @@ def test(env, args):
     act_dim = env.action_space.shape[0]
 
     # Build our policy the same way we build our actor model in PPO
-    policy = policy_network.Network(obs_dim, act_dim)
+    policy = policy_network.ActorNetwork(obs_dim, act_dim)
 
     # Load in the actor model saved by the PPO algorithm
     policy.load_state_dict(torch.load(args.actor_model))
@@ -116,7 +116,7 @@ def main(model_path="/home/jerry/Projects/finger_skills/src/finger_skills/"):
             'timesteps_per_batch': TIMESTEPS_PER_BATCH,
             'max_timesteps_per_episode': MAX_TIMESTEPS_PER_EPISODE,
             'gamma': 0.95,  # no discount
-            'n_updates_per_iteration': 5,
+            'n_updates_per_iteration': 20,
             'lr': 3e-4,
             'clip': 0.2,
             'render': RENDER,
