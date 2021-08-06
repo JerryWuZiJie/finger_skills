@@ -5,6 +5,8 @@ it only works for environment with continuous observation and action space
 
 import sys
 import os
+import pickle
+import time
 
 # import gym
 import torch
@@ -18,43 +20,53 @@ import env_finger
 DT = 0.01
 MAX_TIMESTEPS_PER_EPISODE = int(2/DT)  # 2s simulation
 TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 50  # 10 game in each iteration
-MODE = 1
+MODE = 3
 
 RENDER = False
 if MODE == 0:
-    MODE = 'train'
+    MODE = 'restart'
 elif MODE == 1:
-    MODE = 'test'
+    MODE = 'train'
     RENDER = True
 elif MODE == 2:
-    MODE = 'restart'
+    MODE = 'test'
+    RENDER = True
+elif MODE == 3:
+    MODE = 'check'
+    RENDER = True
+else:
+    print('invalid mode')
+    sys.exit(0)
 
 
 def train(env, args):
     print(f"Training")
 
-    model = ppo.PPO(env, args.actor_model, args.critic_model,
-                    **args.hyperparameters)
+    model = ppo.PPO(env, args.model_path, **args.hyperparameters)
 
     if args.mode != 'restart':
         # Tries to load in an existing actor/critic model to continue training on
+        actor_model = os.path.join(
+            args.model_path, 'ppo_actor.pth')  # actor state dict
+        critic_model = os.path.join(
+            args.model_path, 'ppo_critic.pth')  # critic state dict
 
-        if args.actor_model != '' and args.critic_model != '':
+        if actor_model != '' and args.critic_model != '':
             # if invalid path
-            if not os.path.isfile(args.actor_model):
+            if not os.path.isfile(actor_model):
                 print('acotor model path incorrect or not exists!')
                 sys.exit(0)
-            elif not os.path.isfile(args.actor_model):
+            elif not os.path.isfile(critic_model):
                 print('critic model path incorrect or not exists!')
                 sys.exit(0)
 
             print(
-                f"Loading in {os.path.basename(args.actor_model)} and {os.path.basename(args.critic_model)}...")
-            model.actor.load_state_dict(torch.load(args.actor_model))
+                f"Loading in {os.path.basename(actor_model)} and {os.path.basename(args.critic_model)}...")
+            model.actor.load_state_dict(torch.load(actor_model))
             model.critic.load_state_dict(torch.load(args.critic_model))
             print(f"Successfully loaded state dicts.")
         # Don't train from scratch if user accidentally forgets actor/critic model
-        elif args.actor_model != '' or args.critic_model != '':
+        elif actor_model != '' or args.critic_model != '':
             print(f"Error: Either specify both actor/critic models or none at all. We don't want to accidentally override anything!")
             sys.exit(0)
         else:
@@ -79,12 +91,15 @@ def test(env, args):
     print(f"Testing")
 
     # If the actor model is not specified, then exit
-    if args.actor_model == '':
+    if args.model_path == '':
         print(f"Didn't specify model file. Exiting.", flush=True)
         sys.exit(0)
-    elif not os.path.isfile(args.actor_model):
-        print('acotor model path incorrect or not exists!')
-        sys.exit(0)
+    else:
+        actor_model = os.path.join(
+            args.model_path, 'ppo_actor.pth')  # actor state dict
+        if not os.path.isfile(actor_model):
+            print('acotor model path incorrect or not exists!')
+            sys.exit(0)
 
     # Extract out dimensions of observation and action spaces
     obs_dim = env.observation_space.shape[0]
@@ -95,7 +110,7 @@ def test(env, args):
 
     # Load in the actor model saved by the PPO algorithm
     policy.load_state_dict(torch.load(
-        args.actor_model, map_location=torch.device('cpu')))
+        actor_model, map_location=torch.device('cpu')))
 
     # Evaluate our policy with a separate module, eval_policy, to demonstrate
     # that once we are done training the model/policy with ppo.py, we no longer need
@@ -107,13 +122,40 @@ def test(env, args):
     print('\n\nTesting done')
 
 
-def main(model_path="/home/jerry/Projects/finger_skills/src/finger_skills/"):
+def check(env, args):
+    print("Checking")
+
+    if args.model_path == '':
+        print(f"Didn't specify model file. Exiting.", flush=True)
+        sys.exit(0)
+    else:
+        action_folder = os.path.join(
+            args.model_path, 'action')  # actor state dict
+        if not os.path.exists(action_folder):
+            print('action folder path incorrect or not exists!')
+            sys.exit(0)
+
+    for f in os.listdir(action_folder):
+        with open(os.path.join(action_folder, f), 'rb') as f:
+            env.reset()
+            time.sleep(1)
+
+            action_list = pickle.load(f)
+            env.render()
+            for action in action_list:
+                env.step(action)
+                env.render()
+
+    print('\n\nChecking done')
+
+
+def main(model_dir="/home/jerry/Projects/finger_skills/src/finger_skills/"):
     if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
-        print('Train on GPU')
+        print('On GPU')
     else:
         torch.set_default_tensor_type('torch.FloatTensor')
-        print('Train on CPU')
+        print('On CPU')
 
     class Temp:
         hyperparameters = {
@@ -132,20 +174,19 @@ def main(model_path="/home/jerry/Projects/finger_skills/src/finger_skills/"):
         mode = MODE  # train/restart/test
         iteration = 100  # iteration in train iterate through one batch, iteration in test iterate through one game
 
-        actor_model = os.path.join(
-            model_path, 'model_state_dict/ppo_actor.pth')
-        critic_model = os.path.join(
-            model_path, 'model_state_dict/ppo_critic.pth')
+        model_path = os.path.join(model_dir, 'model_info')
 
     args = Temp()
 
     # make environment and model
     env = env_finger.EnvFingers(render=args.hyperparameters['render'], dt=DT)
 
-    if args.mode != 'test':
-        train(env, args)
-    else:
+    if args.mode == 'check':
+        check(env, args)
+    elif args.mode == 'test':
         test(env, args)
+    else:
+        train(env, args)
 
     env.close()
 

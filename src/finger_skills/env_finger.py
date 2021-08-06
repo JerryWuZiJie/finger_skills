@@ -106,7 +106,7 @@ class EnvFingers:
         self._dt = dt
 
         # init BulletEnv
-        if render:
+        if self._render:
             self.bullet_env = BulletEnv(
                 server=pybullet.GUI, dt=self._dt)  # BulletEnvWithGround()
             # set initial view point

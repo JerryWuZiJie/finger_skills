@@ -1,5 +1,5 @@
 # model state_dict file
-model_state_dict
+model_info
 
 # python run cache file
 __pycache__

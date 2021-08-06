@@ -42,7 +42,7 @@ class ActorNetwork(Network):
     def __init__(self, in_dim, out_dim, hidden_layer=[64, 64], activation=nn.ReLU):
         super().__init__(in_dim, out_dim, hidden_layer=hidden_layer, activation=activation)
 
-        cov_var = torch.full(size=(out_dim,), fill_value=0.5)
+        cov_var = torch.full(size=(out_dim,), fill_value=0.05)
         self.cov = nn.Parameter(cov_var)
 
 

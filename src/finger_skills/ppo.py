@@ -1,4 +1,5 @@
 import os
+import pickle
 import time
 
 import torch
@@ -9,7 +10,7 @@ import policy_network
 
 
 class PPO:
-    def __init__(self, env, actor_save_path, critic_save_path, **hyperparameters):
+    def __init__(self, env, save_path, **hyperparameters):
         # initialize hyperparameters
         self._init_hyperparameters(hyperparameters)
 
@@ -31,13 +32,14 @@ class PPO:
 
         # save model path
         # create path
-        i = actor_save_path.rfind('/')
-        save_path = actor_save_path[:i]
         if not os.path.exists(save_path):
             os.mkdir(save_path)
         # store path
-        self.a_path = actor_save_path
-        self.c_path = critic_save_path
+        self.a_path = os.path.join(save_path, 'ppo_actor.pth')  # actor state dict
+        self.c_path = os.path.join(save_path, 'ppo_critic.pth')  # critic state dict
+        self.action_folder = os.path.join(save_path, "action")  # action
+        if not os.path.exists(self.action_folder):
+            os.mkdir(self.action_folder)
 
     def _init_hyperparameters(self, hyperparameters):
         """
@@ -116,7 +118,7 @@ class PPO:
             generator = torch.Generator(
                 device='cuda' if torch.cuda.is_available() else 'cpu')
             train_batch = torch.utils.data.DataLoader(
-                batch_data, batch_size=100, shuffle=True, generator=generator)
+                batch_data, batch_size=1000, shuffle=True, generator=generator)
 
             self.logger['i_so_far'] += 1
 
@@ -187,15 +189,12 @@ class PPO:
         # iterate the batch
         while current_steps < self.timesteps_per_batch:
             reward_list = []
+            action_list = []
             obs = self.env.reset()
             done = False
 
             # iterate for one run
             for _ in range(self.max_timesteps_per_episode):
-                if first_round and (self.logger['i_so_far'] % self.render_every_i == 0):
-                    if self.render:
-                        self.env.render()
-
                 current_steps += 1
 
                 batch_obs.append(obs)
@@ -206,6 +205,14 @@ class PPO:
                 batch_acts.append(action)
                 reward_list.append(rew)
 
+                if first_round:
+                    # store first round action
+                    action_list.append(action)
+                    # render first_round
+                    if (self.logger['i_so_far'] % self.render_every_i == 0):
+                        if self.render:
+                            self.env.render()
+
                 if done:
                     # increase reward if solve the environment
                     for i in range(len(reward_list)):
@@ -215,6 +222,9 @@ class PPO:
             # disable rendering for rest of the batch
             if first_round:
                 first_round = False
+                # store action
+                with open(os.path.join(self.action_folder, 'iter'+str(self.logger['i_so_far']+1))+'.pkl', 'wb') as f:
+                    pickle.dump(action_list, f)
 
             batch_rews.append(reward_list)
             self.logger['batch_lens'].append(len(reward_list))
