@@ -214,9 +214,6 @@ class PPO:
                             self.env.render()
 
                 if done:
-                    # increase reward if solve the environment
-                    for i in range(len(reward_list)):
-                        reward_list[i] += 100
                     break
 
             # disable rendering for rest of the batch

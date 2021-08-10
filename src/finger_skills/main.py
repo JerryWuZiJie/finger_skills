@@ -19,15 +19,15 @@ import env_finger
 
 DT = 0.01
 MAX_TIMESTEPS_PER_EPISODE = int(2/DT)  # 2s simulation
-TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 50  # 10 game in each iteration
-MODE = 3
+TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 10  # 10 game in each iteration
+MODE = 0
 
 RENDER = False
 if MODE == 0:
     MODE = 'restart'
 elif MODE == 1:
     MODE = 'train'
-    RENDER = True
+    RENDER = False
 elif MODE == 2:
     MODE = 'test'
     RENDER = True
@@ -51,7 +51,7 @@ def train(env, args):
         critic_model = os.path.join(
             args.model_path, 'ppo_critic.pth')  # critic state dict
 
-        if actor_model != '' and args.critic_model != '':
+        if actor_model != '' and critic_model != '':
             # if invalid path
             if not os.path.isfile(actor_model):
                 print('acotor model path incorrect or not exists!')
@@ -61,12 +61,12 @@ def train(env, args):
                 sys.exit(0)
 
             print(
-                f"Loading in {os.path.basename(actor_model)} and {os.path.basename(args.critic_model)}...")
+                f"Loading in {os.path.basename(actor_model)} and {os.path.basename(critic_model)}...")
             model.actor.load_state_dict(torch.load(actor_model))
-            model.critic.load_state_dict(torch.load(args.critic_model))
+            model.critic.load_state_dict(torch.load(critic_model))
             print(f"Successfully loaded state dicts.")
         # Don't train from scratch if user accidentally forgets actor/critic model
-        elif actor_model != '' or args.critic_model != '':
+        elif actor_model != '' or critic_model != '':
             print(f"Error: Either specify both actor/critic models or none at all. We don't want to accidentally override anything!")
             sys.exit(0)
         else:
