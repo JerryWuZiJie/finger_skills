@@ -8,7 +8,7 @@ import os
 import pickle
 import time
 
-# import gym
+import gym  # TODO
 import torch
 
 import ppo
@@ -20,7 +20,8 @@ import env_finger
 DT = 0.01
 MAX_TIMESTEPS_PER_EPISODE = int(2/DT)  # 2s simulation
 TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 10  # 10 game in each iteration
-MODE = 0
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+MODE = 2
 
 RENDER = False
 if MODE == 0:
@@ -62,8 +63,8 @@ def train(env, args):
 
             print(
                 f"Loading in {os.path.basename(actor_model)} and {os.path.basename(critic_model)}...")
-            model.actor.load_state_dict(torch.load(actor_model))
-            model.critic.load_state_dict(torch.load(critic_model))
+            model.actor.load_state_dict(torch.load(actor_model, map_location=torch.device(DEVICE)))
+            model.critic.load_state_dict(torch.load(critic_model, map_location=torch.device(DEVICE)))
             print(f"Successfully loaded state dicts.")
         # Don't train from scratch if user accidentally forgets actor/critic model
         elif actor_model != '' or critic_model != '':
@@ -106,11 +107,11 @@ def test(env, args):
     act_dim = env.action_space.shape[0]
 
     # Build our policy the same way we build our actor model in PPO
-    policy = policy_network.ActorNetwork(obs_dim, act_dim)
+    policy = policy_network.Network(obs_dim, act_dim)
 
     # Load in the actor model saved by the PPO algorithm
     policy.load_state_dict(torch.load(
-        actor_model, map_location=torch.device('cpu')))
+        actor_model, map_location=torch.device(DEVICE)))
 
     # Evaluate our policy with a separate module, eval_policy, to demonstrate
     # that once we are done training the model/policy with ppo.py, we no longer need
@@ -136,6 +137,7 @@ def check(env, args):
             sys.exit(0)
 
     for f in os.listdir(action_folder):
+        print('-'*10, 'Rendering', f, '-'*10)
         with open(os.path.join(action_folder, f), 'rb') as f:
             env.reset()
             time.sleep(1)
@@ -161,9 +163,9 @@ def main(model_dir="/home/jerry/Projects/finger_skills/src/finger_skills/"):
         hyperparameters = {
             'timesteps_per_batch': TIMESTEPS_PER_BATCH,
             'max_timesteps_per_episode': MAX_TIMESTEPS_PER_EPISODE,
-            'gamma': 0.95,  # no discount
+            'gamma': 0.95,
             'n_updates_per_iteration': 20,
-            'lr': 3e-4,
+            'lr': 5e-3,
             'clip': 0.2,
             'render': RENDER,
             'render_every_i': 1,
@@ -179,7 +181,8 @@ def main(model_dir="/home/jerry/Projects/finger_skills/src/finger_skills/"):
     args = Temp()
 
     # make environment and model
-    env = env_finger.EnvFingers(render=args.hyperparameters['render'], dt=DT)
+    # env = env_finger.EnvFingers(render=args.hyperparameters['render'], dt=DT)
+    env = gym.make('Pendulum-v0')  # TODO
 
     if args.mode == 'check':
         check(env, args)

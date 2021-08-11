@@ -19,8 +19,8 @@ class PPO:
         self.act_dim = env.action_space.shape[0]
 
         # STEP 1: initialize actor critic
-        self.actor = policy_network.ActorNetwork(self.obs_dim, self.act_dim)
-        self.critic = policy_network.CriticNetwork(self.obs_dim, 1)
+        self.actor = policy_network.Network(self.obs_dim, self.act_dim)
+        self.critic = policy_network.Network(self.obs_dim, 1)
         # optimizer
         self.actor_optim = torch.optim.Adam(
             self.actor.parameters(), lr=self.lr)
@@ -29,6 +29,10 @@ class PPO:
 
         # criterion for critic loss
         self.mse = nn.MSELoss()
+
+        # covariance matrix
+        cov_var = torch.full(size=(self.act_dim,), fill_value=0.05)
+        self.cov = torch.diag(cov_var)
 
         # save model path
         # create path
@@ -113,52 +117,52 @@ class PPO:
 
             batch_rtg, batch_obs, batch_acts = self.rollout()
 
-            # stack the data and create dataloader to draw mini batch
-            batch_data = torch.hstack([batch_rtg, batch_obs, batch_acts])
-            generator = torch.Generator(
-                device='cuda' if torch.cuda.is_available() else 'cpu')
-            train_batch = torch.utils.data.DataLoader(
-                batch_data, batch_size=1000, shuffle=True, generator=generator)
+            # # stack the data and create dataloader to draw mini batch
+            # batch_data = torch.hstack([batch_rtg, batch_obs, batch_acts])
+            # generator = torch.Generator(
+            #     device='cuda' if torch.cuda.is_available() else 'cpu')
+            # train_batch = torch.utils.data.DataLoader(
+            #     batch_data, batch_size=1000, shuffle=True, generator=generator)
 
             self.logger['i_so_far'] += 1
 
-            # train for mini batch
-            for mini_batch in train_batch:
-                mbatch_rtg = mini_batch[:, :1]
-                mbatch_obs = mini_batch[:, 1:1+self.obs_dim]
-                mbatch_acts = mini_batch[:, -self.act_dim:]
+            # # train for mini batch
+            # for mini_batch in train_batch:
+            #     mbatch_rtg = mini_batch[:, :1]
+            #     mbatch_obs = mini_batch[:, 1:1+self.obs_dim]
+            #     mbatch_acts = mini_batch[:, -self.act_dim:]
 
-                # STEP 5: compute advantage estimation, A_k = Q - V
-                V = self.critic(mbatch_obs)
-                A_k = mbatch_rtg - V.detach()
-                # normalize A_k
-                A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
+            # STEP 5: compute advantage estimation, A_k = Q - V
+            V = self.critic(batch_obs).squeeze()
+            A_k = batch_rtg - V.detach()
+            # normalize A_k
+            A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
 
-                # get previous log_prob for actor
-                log_prob_k = self.get_logprob(mbatch_obs, mbatch_acts).detach()
+            # get previous log_prob for actor
+            log_prob_k = self.get_logprob(batch_obs, batch_acts).detach()
 
-                for _ in range(self.n_updates_per_iteration):
-                    # STEP 6: update actor
-                    log_prob_cur = self.get_logprob(mbatch_obs, mbatch_acts)
-                    ratio = torch.exp(log_prob_cur - log_prob_k)
-                    clip = torch.clamp(ratio, 1-self.clip, 1+self.clip)
-                    actor_loss = (-torch.min(ratio*A_k, clip*A_k)).mean()
+            for _ in range(self.n_updates_per_iteration):
+                # STEP 6: update actor
+                log_prob_cur = self.get_logprob(batch_obs, batch_acts)
+                ratio = torch.exp(log_prob_cur - log_prob_k)
+                clip = torch.clamp(ratio, 1-self.clip, 1+self.clip)
+                actor_loss = (-torch.min(ratio*A_k, clip*A_k)).mean()
 
-                    self.actor_optim.zero_grad()
-                    actor_loss.backward(retain_graph=True)
-                    self.actor_optim.step()
+                self.actor_optim.zero_grad()
+                actor_loss.backward(retain_graph=True)
+                self.actor_optim.step()
 
-                    # STEP 7: update critic
-                    current_V = self.critic(mbatch_obs)
-                    critic_loss = self.mse(current_V, mbatch_rtg)
+                # STEP 7: update critic
+                current_V = self.critic(batch_obs).squeeze()
+                critic_loss = self.mse(current_V, batch_rtg)
 
-                    self.critic_optim.zero_grad()
-                    critic_loss.backward()
-                    self.critic_optim.step()
+                self.critic_optim.zero_grad()
+                critic_loss.backward()
+                self.critic_optim.step()
 
-                    # Log losses
-                    self.logger['actor_losses'].append(actor_loss.detach())
-                    self.logger['critic_losses'].append(critic_loss.detach())
+                # Log losses
+                self.logger['actor_losses'].append(actor_loss.detach())
+                self.logger['critic_losses'].append(critic_loss.detach())
 
             # print summary
             self._log_summary()
@@ -243,9 +247,9 @@ class PPO:
         get action from sampling
         '''
         mean = self.actor(obs)
-        cov_mat = torch.diag(self.actor.cov)
+        # cov_mat = torch.diag(self.actor.cov)
         distribution = torch.distributions.MultivariateNormal(
-            mean, cov_mat)
+            mean, self.cov)
         action = distribution.sample()
 
         # Return the sampled action and the log prob of that action
@@ -261,9 +265,9 @@ class PPO:
             calculate the log_prob(s) of given action(s) and observation(s)
         '''
         mean = self.actor(obs)
-        cov_mat = torch.diag(self.actor.cov)
+        # cov_mat = torch.diag(self.actor.cov)
         distribution = torch.distributions.MultivariateNormal(
-            mean, cov_mat)
+            mean, self.cov)
         log_prob = distribution.log_prob(act)
 
         return log_prob
@@ -276,7 +280,7 @@ class PPO:
             discounted_rew = 0
             for rew in reversed(rews):
                 discounted_rew = rew + self.gamma*discounted_rew
-                rtg.append([discounted_rew])
+                rtg.append(discounted_rew)
 
         rtg.reverse()
 

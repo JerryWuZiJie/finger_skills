@@ -38,13 +38,13 @@ class Network(nn.Module):
         return self.net(obs)
 
 
-class ActorNetwork(Network):
-    def __init__(self, in_dim, out_dim, hidden_layer=[64, 64], activation=nn.ReLU):
-        super().__init__(in_dim, out_dim, hidden_layer=hidden_layer, activation=activation)
+# class ActorNetwork(Network):
+#     def __init__(self, in_dim, out_dim, hidden_layer=[64, 64], activation=nn.ReLU):
+#         super().__init__(in_dim, out_dim, hidden_layer=hidden_layer, activation=activation)
 
-        cov_var = torch.full(size=(out_dim,), fill_value=0.05)
-        self.cov = nn.Parameter(cov_var)
+#         cov_var = torch.full(size=(out_dim,), fill_value=0.05)
+#         self.cov = nn.Parameter(cov_var)
 
 
-class CriticNetwork(Network):
-    pass
+# class CriticNetwork(Network):
+#     pass
