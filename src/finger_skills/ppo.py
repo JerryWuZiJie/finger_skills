@@ -19,8 +19,8 @@ class PPO:
         self.act_dim = env.action_space.shape[0]
 
         # STEP 1: initialize actor critic
-        self.actor = policy_network.Network(self.obs_dim, self.act_dim)
-        self.critic = policy_network.Network(self.obs_dim, 1)
+        self.actor = policy_network.ActorNetwork(self.obs_dim, self.act_dim)
+        self.critic = policy_network.CriticNetwork(self.obs_dim, 1)
         # optimizer
         self.actor_optim = torch.optim.Adam(
             self.actor.parameters(), lr=self.lr)
@@ -29,10 +29,6 @@ class PPO:
 
         # criterion for critic loss
         self.mse = nn.MSELoss()
-
-        # covariance matrix
-        cov_var = torch.full(size=(self.act_dim,), fill_value=0.05)
-        self.cov = torch.diag(cov_var)
 
         # save model path
         # create path
@@ -117,20 +113,7 @@ class PPO:
 
             batch_rtg, batch_obs, batch_acts = self.rollout()
 
-            # # stack the data and create dataloader to draw mini batch
-            # batch_data = torch.hstack([batch_rtg, batch_obs, batch_acts])
-            # generator = torch.Generator(
-            #     device='cuda' if torch.cuda.is_available() else 'cpu')
-            # train_batch = torch.utils.data.DataLoader(
-            #     batch_data, batch_size=1000, shuffle=True, generator=generator)
-
             self.logger['i_so_far'] += 1
-
-            # # train for mini batch
-            # for mini_batch in train_batch:
-            #     mbatch_rtg = mini_batch[:, :1]
-            #     mbatch_obs = mini_batch[:, 1:1+self.obs_dim]
-            #     mbatch_acts = mini_batch[:, -self.act_dim:]
 
             # STEP 5: compute advantage estimation, A_k = Q - V
             V = self.critic(batch_obs).squeeze()
@@ -247,9 +230,9 @@ class PPO:
         get action from sampling
         '''
         mean = self.actor(obs)
-        # cov_mat = torch.diag(self.actor.cov)
+        cov_mat = torch.diag(torch.exp(self.actor.log_std)**2)
         distribution = torch.distributions.MultivariateNormal(
-            mean, self.cov)
+            mean, cov_mat)
         action = distribution.sample()
 
         # Return the sampled action and the log prob of that action
@@ -265,9 +248,9 @@ class PPO:
             calculate the log_prob(s) of given action(s) and observation(s)
         '''
         mean = self.actor(obs)
-        # cov_mat = torch.diag(self.actor.cov)
+        cov_mat = torch.diag(torch.exp(self.actor.log_std)**2)
         distribution = torch.distributions.MultivariateNormal(
-            mean, self.cov)
+            mean, cov_mat)
         log_prob = distribution.log_prob(act)
 
         return log_prob

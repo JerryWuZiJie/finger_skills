@@ -86,7 +86,7 @@ class EnvFingers:
         # desired position of the box
         self.des_pose = np.array(des_pos)
         # threshold for done condition
-        self.threshold = 0.005  # meter, it is the square of distance
+        self.threshold = 0.04  # meter
 
         # initialize impedance control
         self.control = ImpedanceControl(np.diag([50]*3), np.diag([1.]*3))
@@ -226,12 +226,10 @@ class EnvFingers:
         observation = np.array([*ee0_pose, *q0, *ee1_pose, *q1, *box_pose])
 
         # distance between box and desired location
-        box_des = sum((box_pose-self.des_pose)**2)
+        box_des = np.linalg.norm(box_pose-self.des_pose)
 
         # reward is the negative of dist between box and des + fingers and box
-        reward = -box_des * 10 + \
-            (-sum((box_pose-ee0_pose)**2) -
-             sum((box_pose-ee1_pose)**2))
+        reward = -box_des * 10 - np.linalg.norm(box_pose-ee0_pose) - np.linalg.norm(box_pose-ee1_pose)
 
         # done if box is close to desired location
         if box_des < self.threshold:

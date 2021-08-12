@@ -8,7 +8,7 @@ import os
 import pickle
 import time
 
-import gym  # TODO
+import gym
 import torch
 
 import ppo
@@ -21,14 +21,14 @@ DT = 0.01
 MAX_TIMESTEPS_PER_EPISODE = int(2/DT)  # 2s simulation
 TIMESTEPS_PER_BATCH = MAX_TIMESTEPS_PER_EPISODE * 10  # 10 game in each iteration
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-MODE = 2
+ITERATION = 100
+MODE = 0
 
 RENDER = False
 if MODE == 0:
     MODE = 'restart'
 elif MODE == 1:
     MODE = 'train'
-    RENDER = False
 elif MODE == 2:
     MODE = 'test'
     RENDER = True
@@ -107,7 +107,7 @@ def test(env, args):
     act_dim = env.action_space.shape[0]
 
     # Build our policy the same way we build our actor model in PPO
-    policy = policy_network.Network(obs_dim, act_dim)
+    policy = policy_network.ActorNetwork(obs_dim, act_dim)
 
     # Load in the actor model saved by the PPO algorithm
     policy.load_state_dict(torch.load(
@@ -174,15 +174,14 @@ def main(model_dir="/home/jerry/Projects/finger_skills/src/finger_skills/"):
         }
 
         mode = MODE  # train/restart/test
-        iteration = 100  # iteration in train iterate through one batch, iteration in test iterate through one game
+        iteration = ITERATION  # iteration in train iterate through one batch, iteration in test iterate through one game
 
         model_path = os.path.join(model_dir, 'model_info')
 
     args = Temp()
 
     # make environment and model
-    # env = env_finger.EnvFingers(render=args.hyperparameters['render'], dt=DT)
-    env = gym.make('Pendulum-v0')  # TODO
+    env = env_finger.EnvFingers(render=args.hyperparameters['render'], dt=DT)
 
     if args.mode == 'check':
         check(env, args)
